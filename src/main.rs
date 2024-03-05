@@ -1,6 +1,6 @@
 mod game_client;
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -17,13 +17,18 @@ use uuid::Uuid;
 
 use crate::game_client::client::{connect_lobby, create_lobby};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct User {
     id: Uuid,
     username: String,
 }
 
-pub type RoomStore = Arc<Mutex<HashSet<String>>>;
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Lobby {
+    users: Vec<User>,
+}
+
+pub type LobbyStore = Arc<Mutex<HashMap<String, Lobby>>>;
 
 fn on_connect(socket: SocketRef, Data(data): Data<Value>) {
     info!("Socket.IO connected: {:?} {:?}", socket.ns(), socket.id);
@@ -35,16 +40,16 @@ fn on_lobby(socket: SocketRef, Data(_): Data<Value>) {
 
     socket.on(
         "connect-lobby",
-        |socket: SocketRef, Data::<Value>(data), store: State<RoomStore>| {
+        |socket: SocketRef, Data::<Value>(data), lobby_store: State<LobbyStore>| {
             info!("Connecting to lobby: {:?}", data);
-            _ = connect_lobby(socket, data, store.clone());
+            _ = connect_lobby(socket, data, lobby_store.clone());
         },
     );
 
     socket.on(
         "create-lobby",
-        |socket: SocketRef, Data::<User>(user), store: State<RoomStore>| {
-            _ = create_lobby(socket, user, store.clone());
+        |socket: SocketRef, Data::<User>(user), lobby_store: State<LobbyStore>| {
+            _ = create_lobby(socket, user, lobby_store.clone());
         },
     );
 }
@@ -54,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(FmtSubscriber::default())?;
 
     let (layer, io) = SocketIo::builder()
-        .with_state(RoomStore::default())
+        .with_state(LobbyStore::default())
         .build_layer();
 
     io.ns("/", on_connect);
