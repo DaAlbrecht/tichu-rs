@@ -4,15 +4,15 @@ use serde_json::Value;
 use socketioxide::extract::SocketRef;
 use tracing::info;
 
-use crate::{Lobby, LobbyStore, User};
+use crate::{Lobby, LobbyStore, Player};
 
 #[derive(Debug, Deserialize)]
 struct TempDto {
-    user: User,
+    user: Player,
     room_id: String,
 }
 
-pub fn create_lobby(socket: SocketRef, user: User, lobby_store: LobbyStore) -> Result<()> {
+pub fn create_lobby(socket: SocketRef, user: Player, lobby_store: LobbyStore) -> Result<()> {
     info!("Creating lobby: {:?}", user);
     let room_id = user.id.to_string();
 
@@ -76,4 +76,17 @@ pub fn connect_lobby(socket: SocketRef, data: Value, lobby_store: LobbyStore) ->
     }
 
     Ok(())
+}
+
+pub fn start_game(socket: SocketRef, lobby_id: String, lobby_store: LobbyStore) {
+    info!("starting game for id : {:?}", lobby_id);
+    lobby_store
+        .lock()
+        .unwrap()
+        .contains_key(&lobby_id)
+        .then(|| {
+            socket
+                .to(lobby_id.clone())
+                .emit("game-started", Value::String(lobby_id))
+        });
 }

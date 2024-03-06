@@ -1,4 +1,7 @@
+mod events;
 mod game_client;
+mod game_core;
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -6,53 +9,25 @@ use std::{
 
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use socketioxide::{
-    extract::{Data, SocketRef, State},
-    SocketIo,
-};
+use socketioxide::SocketIo;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
-use crate::game_client::client::{connect_lobby, create_lobby};
+use crate::events::on_connect;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct User {
+struct Player {
     id: Uuid,
     username: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Lobby {
-    users: Vec<User>,
+    users: Vec<Player>,
 }
 
 pub type LobbyStore = Arc<Mutex<HashMap<String, Lobby>>>;
-
-fn on_connect(socket: SocketRef, Data(data): Data<Value>) {
-    info!("Socket.IO connected: {:?} {:?}", socket.ns(), socket.id);
-    socket.emit("auth", data).ok();
-}
-
-fn on_lobby(socket: SocketRef, Data(_): Data<Value>) {
-    info!("Socket.IO connected: {:?} {:?}", socket.ns(), socket.id);
-
-    socket.on(
-        "connect-lobby",
-        |socket: SocketRef, Data::<Value>(data), lobby_store: State<LobbyStore>| {
-            info!("Connecting to lobby: {:?}", data);
-            _ = connect_lobby(socket, data, lobby_store.clone());
-        },
-    );
-
-    socket.on(
-        "create-lobby",
-        |socket: SocketRef, Data::<User>(user), lobby_store: State<LobbyStore>| {
-            _ = create_lobby(socket, user, lobby_store.clone());
-        },
-    );
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,7 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_layer();
 
     io.ns("/", on_connect);
-    io.ns("/lobby", on_lobby);
 
     let app = axum::Router::new()
         .route("/", get(|| async { "Hello, World!" }))
