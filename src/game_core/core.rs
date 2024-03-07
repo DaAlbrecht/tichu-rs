@@ -44,7 +44,7 @@ pub enum Cards {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Card {
-    color: Color,
+    color: Option<Color>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,56 +53,55 @@ enum Color {
     Blue,
     Red,
     Green,
-    Special,
 }
 
 fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
-    for card_color in [Color::Black, Color::Blue, Color::Red, Color::Green] {
+    for color in [Color::Black, Color::Blue, Color::Red, Color::Green] {
         deck.push(Cards::Two(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Three(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Four(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Five(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Six(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Seven(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Eight(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Nine(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Ten(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Jack(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Queen(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::King(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
         deck.push(Cards::Ace(Card {
-            color: card_color.clone(),
+            color: Some(color.clone()),
         }));
     }
-    deck.push(Cards::Dog);
-    deck.push(Cards::Mahjong);
-    deck.push(Cards::Phoenix);
-    deck.push(Cards::Dragon);
+    deck.push(Cards::Dog(Card { color: None }));
+    deck.push(Cards::Dragon(Card { color: None }));
+    deck.push(Cards::Phoenix(Card { color: None }));
+    deck.push(Cards::Mahjong(Card { color: None }));
 
     let mut hands: Vec<Hand> = Vec::with_capacity(4);
 
@@ -135,7 +134,8 @@ fn declare_exchange(player: Player, exchange: Exchange) -> Result<()> {
 }
 
 fn player_owns_card(player: &Player, card: &Cards) -> bool {
-    player.hand.cards.contains(card)
+    //also match color
+    todo!()
 }
 
 #[cfg(test)]
