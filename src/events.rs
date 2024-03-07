@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::{
     game_client::client::{connect_lobby, create_lobby, start_game},
-    LobbyStore, Player,
+    LobbyStore, User,
 };
 
 pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
@@ -20,7 +20,7 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
 
     socket.on(
         "create-lobby",
-        |socket: SocketRef, Data::<Player>(user), lobby_store: State<LobbyStore>| {
+        |socket: SocketRef, Data::<User>(user), lobby_store: State<LobbyStore>| {
             _ = create_lobby(socket, user, lobby_store.clone());
         },
     );

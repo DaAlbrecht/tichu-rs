@@ -17,14 +17,14 @@ use uuid::Uuid;
 use crate::events::on_connect;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct Player {
+struct User {
     id: Uuid,
     username: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Lobby {
-    users: Vec<Player>,
+    users: Vec<User>,
 }
 
 pub type LobbyStore = Arc<Mutex<HashMap<String, Lobby>>>;
