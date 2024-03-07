@@ -1,68 +1,103 @@
-use anyhow::{anyhow, Result};
-use std::{collections::HashMap, task::Wake};
+use anyhow::Result;
 
 use rand::*;
 use tracing::info;
 use uuid::Uuid;
+
+use super::handler::Exchange;
 
 pub struct Game {
     pub game_id: Uuid,
     pub players: Vec<Player>,
 }
 
-pub struct Player {
+struct Player {
     pub id: String,
     pub hand: Hand,
 }
 
 #[derive(Debug, Clone)]
-pub struct Hand {
+struct Hand {
     pub cards: Vec<Cards>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Exchange {
-    pub player_id: String,
-    pub player_card: HashMap<String, Cards>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cards {
-    Dog,
-    Mahjong,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    Ten,
-    Jack,
-    Queen,
-    King,
-    Ace,
-    Phoenix,
-    Dragon,
+    Dog(Card),
+    Mahjong(Card),
+    Two(Card),
+    Three(Card),
+    Four(Card),
+    Five(Card),
+    Six(Card),
+    Seven(Card),
+    Eight(Card),
+    Nine(Card),
+    Ten(Card),
+    Jack(Card),
+    Queen(Card),
+    King(Card),
+    Ace(Card),
+    Phoenix(Card),
+    Dragon(Card),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Card {
+    color: Color,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Color {
+    Black,
+    Blue,
+    Red,
+    Green,
+    Special,
 }
 
 fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
-    for _ in 0..4 {
-        deck.push(Cards::Two);
-        deck.push(Cards::Three);
-        deck.push(Cards::Four);
-        deck.push(Cards::Five);
-        deck.push(Cards::Six);
-        deck.push(Cards::Seven);
-        deck.push(Cards::Eight);
-        deck.push(Cards::Nine);
-        deck.push(Cards::Ten);
-        deck.push(Cards::Jack);
-        deck.push(Cards::Queen);
-        deck.push(Cards::King);
-        deck.push(Cards::Ace);
+    for card_color in [Color::Black, Color::Blue, Color::Red, Color::Green] {
+        deck.push(Cards::Two(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Three(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Four(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Five(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Six(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Seven(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Eight(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Nine(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Ten(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Jack(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Queen(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::King(Card {
+            color: card_color.clone(),
+        }));
+        deck.push(Cards::Ace(Card {
+            color: card_color.clone(),
+        }));
     }
     deck.push(Cards::Dog);
     deck.push(Cards::Mahjong);
