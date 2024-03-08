@@ -4,7 +4,10 @@ use tracing::info;
 
 use crate::{
     game_client::client::{connect_lobby, create_lobby, start_game},
-    LobbyStore, User,
+    game_core::{
+        core::GameStore,
+        handler::{exchange_cards, show_cards, Exchange},
+    },
 };
 
 pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
@@ -12,23 +15,39 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
 
     socket.on(
         "connect-lobby",
-        |socket: SocketRef, Data::<Value>(data), lobby_store: State<LobbyStore>| {
+        |socket: SocketRef, Data::<Value>(data), game_store: State<GameStore>| {
             info!("Connecting to lobby: {:?}", data);
-            _ = connect_lobby(socket, data, lobby_store.clone());
+            _ = connect_lobby(socket, data, game_store.clone());
         },
     );
 
     socket.on(
         "create-lobby",
-        |socket: SocketRef, Data::<User>(user), lobby_store: State<LobbyStore>| {
-            _ = create_lobby(socket, user, lobby_store.clone());
+        |socket: SocketRef, Data::<String>(username), game_store: State<GameStore>| {
+            _ = create_lobby(socket, username, game_store.clone());
         },
     );
 
     socket.on(
         "start-game",
-        |socket: SocketRef, Data::<String>(data), lobby_store: State<LobbyStore>| {
-            start_game(socket, data, lobby_store.clone());
+        |socket: SocketRef, Data::<String>(data), game_store: State<GameStore>| {
+            start_game(socket, data, game_store.clone());
+        },
+    );
+
+    socket.on(
+        "exchange-cards",
+        |socket: SocketRef, Data::<Exchange>(exchange)| {
+            info!("Exchange cards: {:?}", exchange);
+            exchange_cards(socket, exchange);
+        },
+    );
+
+    socket.on(
+        "show-cards",
+        |socket: SocketRef, Data::<String>(game_id), game_store: State<GameStore>| {
+            info!("Show cards: {:?}", game_id);
+            show_cards(socket, game_id, game_store.clone())
         },
     );
 }

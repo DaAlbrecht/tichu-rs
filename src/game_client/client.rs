@@ -4,89 +4,103 @@ use serde_json::Value;
 use socketioxide::extract::SocketRef;
 use tracing::info;
 
-use crate::{Lobby, LobbyStore, User};
+use crate::game_core::core::{deal_cards, Game, GameStore, Player};
 
 #[derive(Debug, Deserialize)]
 struct TempDto {
-    user: User,
-    room_id: String,
+    game_id: String,
+    username: String,
 }
 
-pub fn create_lobby(socket: SocketRef, user: User, lobby_store: LobbyStore) -> Result<()> {
-    info!("Creating lobby: {:?}", user);
-    let room_id = user.id.to_string();
+pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) -> Result<()> {
+    let game_id = if cfg!(debug_assertions) {
+        "b4a0738b-6be2-4ede-bf37-48e5595f73e1".to_string()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
 
-    if lobby_store.lock().unwrap().contains_key(&room_id) {
+    let new_player = Player {
+        socket_id: socket.id.clone().to_string(),
+        username,
+        hand: None,
+    };
+
+    if game_store.lock().unwrap().contains_key(&game_id) {
         info!("Lobby already exists");
-        socket.emit("join-lobby", Value::String(room_id))?;
+        socket.emit("join-lobby", game_id)?;
         return Ok(());
     }
 
-    lobby_store.lock().unwrap().insert(
-        room_id.clone(),
-        Lobby {
-            users: vec![user.clone()],
+    game_store.lock().unwrap().insert(
+        game_id.clone(),
+        Game {
+            game_id: game_id.clone(),
+            players: vec![new_player],
         },
     );
-    socket.join(room_id.clone())?;
-    socket.emit("lobby-created", Value::String(room_id))?;
+    socket.join(game_id.clone())?;
+    socket.emit("lobby-created", game_id)?;
     Ok(())
 }
 
-pub fn connect_lobby(socket: SocketRef, data: Value, lobby_store: LobbyStore) -> Result<()> {
+pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> Result<()> {
     info!("Connecting to lobby: {:?}", data);
     let data: TempDto = serde_json::from_value(data)?;
-    let lobby_id = data.room_id;
+    let game_id = data.game_id;
 
-    if !lobby_store.lock().unwrap().contains_key(&lobby_id) {
+    let new_player = Player {
+        socket_id: socket.id.clone().to_string(),
+        username: data.username,
+        hand: None,
+    };
+
+    if !game_store.lock().unwrap().contains_key(&game_id) {
         info!("Lobby does not exist");
-        socket.emit("lobby-not-found", Value::String(lobby_id))?;
+        socket.emit("lobby-not-found", game_id)?;
         return Ok(());
     }
 
-    socket.join(lobby_id.clone())?;
+    socket.join(game_id.clone())?;
 
-    lobby_store
+    game_store
         .lock()
         .unwrap()
-        .get_mut(&lobby_id)
+        .get_mut(&game_id)
         .unwrap()
-        .users
-        .push(data.user.clone());
+        .players
+        .push(new_player.clone());
 
     socket
-        .to(lobby_id.clone())
-        .emit("user-joined", data.user.clone())
+        .to(game_id.clone())
+        .emit("user-joined", &new_player.username)
         .expect("Failed to emit");
 
     //emit new user to all users in the lobby
-    let lobby_guard = lobby_store.lock().unwrap();
+    let game_guard = game_store.lock().unwrap();
 
-    let lobby = lobby_guard.get(&lobby_id);
+    let game = game_guard.get(&game_id);
 
-    if let Some(lobby) = lobby {
-        let users = lobby
-            .users
+    if let Some(game) = game {
+        let players = game
+            .players
             .iter()
-            .filter(|u| u.id != data.user.id)
-            .map(|u| serde_json::to_value(u).unwrap())
-            .collect::<Vec<Value>>();
+            .filter(|u| u.socket_id != new_player.socket_id)
+            .map(|u| u.username.as_str())
+            .collect::<Vec<&str>>();
 
-        socket.emit("users-in-lobby", Value::Array(users))?;
+        socket.emit("users-in-lobby", players)?;
     }
 
     Ok(())
 }
 
-pub fn start_game(socket: SocketRef, lobby_id: String, lobby_store: LobbyStore) {
-    info!("starting game for id : {:?}", lobby_id);
-    lobby_store
+pub fn start_game(socket: SocketRef, game_id: String, game_store: GameStore) {
+    info!("starting game for id : {:?}", game_id);
+    game_store
         .lock()
         .unwrap()
-        .contains_key(&lobby_id)
-        .then(|| {
-            socket
-                .to(lobby_id.clone())
-                .emit("game-started", Value::String(lobby_id))
-        });
+        .contains_key(&game_id)
+        .then(|| socket.to(game_id.clone()).emit("game-started", &game_id));
+
+    deal_cards(game_id, game_store);
 }
