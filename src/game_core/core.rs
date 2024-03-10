@@ -9,22 +9,22 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use super::handler::Exchange;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Game {
     pub game_id: String,
-    pub players: Vec<Player>,
+    //TODO: change to take socket_id
+    pub players: HashMap<String, Player>,
     pub is_running: bool,
 }
 
 pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Player {
     pub socket_id: String,
     pub username: String,
     pub hand: Option<Hand>,
+    pub team: Option<Team>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +66,14 @@ enum Color {
     Green,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Team {
+    One,
+    Two,
+    Spectator,
+}
+
 /*
 enum LeadType {
     Single,
@@ -80,6 +88,12 @@ enum Bomb {
     FourOfAKind,
     straightFlush,
 }*/
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Exchange {
+    pub player_id: String,
+    pub player_card: HashMap<String, Cards>,
+}
 
 pub fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
@@ -152,11 +166,13 @@ pub fn deal_cards(game_id: String, game_store: GameStore) -> anyhow::Result<()> 
         .with_context(|| format!("Game {} not found", game_id))?;
 
     // clear hands
-    game.players.iter_mut().for_each(|p| p.hand = None);
-
+    for player in game.players.values_mut() {
+        player.hand = None;
+    }
     let hands = generate_hands();
-    for (i, player) in game.players.iter_mut().enumerate() {
-        player.hand = Some(hands[i].clone());
+
+    for (player, hand) in game.players.iter_mut().zip(hands.iter()) {
+        player.1.hand = Some(hand.clone());
     }
 
     Ok(())
