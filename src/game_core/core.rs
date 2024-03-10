@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -11,9 +11,11 @@ use tracing::info;
 
 use super::handler::Exchange;
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Game {
     pub game_id: String,
     pub players: Vec<Player>,
+    pub is_running: bool,
 }
 
 pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
@@ -143,16 +145,24 @@ pub fn generate_hands() -> Vec<Hand> {
     hands
 }
 
-pub fn deal_cards(game_id: String, game_store: GameStore) {
+pub fn deal_cards(game_id: String, game_store: GameStore) -> anyhow::Result<()> {
     let mut game_lock = game_store.lock().unwrap();
-    let game = game_lock.get_mut(&game_id).unwrap();
+    let game = game_lock
+        .get_mut(&game_id)
+        .with_context(|| format!("Game {} not found", game_id))?;
+
+    // clear hands
+    game.players.iter_mut().for_each(|p| p.hand = None);
+
     let hands = generate_hands();
     for (i, player) in game.players.iter_mut().enumerate() {
         player.hand = Some(hands[i].clone());
     }
+
+    Ok(())
 }
 
-pub fn validate_exchange(player: Player, exchange: Exchange) -> Result<Exchange> {
+pub fn validate_exchange(player: Player, exchange: Exchange) -> anyhow::Result<Exchange> {
     if exchange.player_card.contains_key(&player.socket_id) {
         info!("cant exchange with yourself");
         return Err(anyhow!("cant exchange with yourself"));

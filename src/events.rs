@@ -3,11 +3,8 @@ use socketioxide::extract::{Data, SocketRef, State};
 use tracing::info;
 
 use crate::{
-    game_client::client::{connect_lobby, create_lobby, start_game},
-    game_core::{
-        core::GameStore,
-        handler::{exchange_cards, show_cards, Exchange},
-    },
+    game_client::client::{connect_lobby, create_lobby},
+    game_core::core::GameStore,
 };
 
 pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
@@ -25,29 +22,6 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
         "create-lobby",
         |socket: SocketRef, Data::<String>(username), game_store: State<GameStore>| {
             _ = create_lobby(socket, username, game_store.clone());
-        },
-    );
-
-    socket.on(
-        "start-game",
-        |socket: SocketRef, Data::<String>(data), game_store: State<GameStore>| {
-            start_game(socket, data, game_store.clone());
-        },
-    );
-
-    socket.on(
-        "exchange-cards",
-        |socket: SocketRef, Data::<Exchange>(exchange)| {
-            info!("Exchange cards: {:?}", exchange);
-            exchange_cards(socket, exchange);
-        },
-    );
-
-    socket.on(
-        "show-cards",
-        |socket: SocketRef, Data::<String>(game_id), game_store: State<GameStore>| {
-            info!("Show cards: {:?}", game_id);
-            show_cards(socket, game_id, game_store.clone())
         },
     );
 }

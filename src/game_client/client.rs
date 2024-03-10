@@ -4,7 +4,7 @@ use serde_json::Value;
 use socketioxide::extract::SocketRef;
 use tracing::info;
 
-use crate::game_core::core::{deal_cards, Game, GameStore, Player};
+use crate::game_core::core::{Game, GameStore, Player};
 
 #[derive(Debug, Deserialize)]
 struct TempDto {
@@ -36,6 +36,7 @@ pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) 
         Game {
             game_id: game_id.clone(),
             players: vec![new_player],
+            ..Default::default()
         },
     );
     socket.join(game_id.clone())?;
@@ -70,12 +71,13 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
         .players
         .push(new_player.clone());
 
+    // emit to all users in the new user that joined
     socket
         .to(game_id.clone())
         .emit("user-joined", &new_player.username)
         .expect("Failed to emit");
 
-    //emit new user to all users in the lobby
+    //emit to the new user all the users in the lobby
     let game_guard = game_store.lock().unwrap();
 
     let game = game_guard.get(&game_id);
@@ -92,15 +94,4 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
     }
 
     Ok(())
-}
-
-pub fn start_game(socket: SocketRef, game_id: String, game_store: GameStore) {
-    info!("starting game for id : {:?}", game_id);
-    game_store
-        .lock()
-        .unwrap()
-        .contains_key(&game_id)
-        .then(|| socket.to(game_id.clone()).emit("game-started", &game_id));
-
-    deal_cards(game_id, game_store);
 }
