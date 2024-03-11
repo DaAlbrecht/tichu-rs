@@ -24,4 +24,12 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
             _ = create_lobby(socket, username, game_store.clone());
         },
     );
+
+    socket.on(
+        "validate-turn",
+        |socket: SocketRef, Data::<Value>(data), game_store: State<GameStore>| {
+            info!("Validating turn: {:?}", data);
+            //_ = validate_turn(socket, data, game_store.clone());
+        },
+    );
 }

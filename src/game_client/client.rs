@@ -20,7 +20,7 @@ pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) 
     //let game_id = uuid::Uuid::new_v4().to_string();
 
     let new_player = Player {
-        socket_id: socket.id.clone().to_string(),
+        socket_id: socket.id,
         username,
         ..Default::default()
     };
@@ -32,7 +32,7 @@ pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) 
     }
     let mut player_map = std::collections::HashMap::new();
 
-    player_map.insert(new_player.username.clone(), new_player.clone());
+    player_map.insert(socket.id, new_player.clone());
 
     game_store.lock().unwrap().insert(
         game_id.clone(),
@@ -53,7 +53,7 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
     let game_id = data.game_id;
 
     let new_player = Player {
-        socket_id: socket.id.clone().to_string(),
+        socket_id: socket.id,
         username: data.username,
         ..Default::default()
     };
@@ -72,7 +72,7 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
         .get_mut(&game_id)
         .unwrap()
         .players
-        .insert(new_player.username.clone(), new_player.clone());
+        .insert(socket.id, new_player.clone());
 
     // emit to all users in the new user that joined
     socket

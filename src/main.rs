@@ -42,7 +42,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = axum::Router::new()
         .route("/", get(|| async { "Hello, World!" }))
         .route("/start", patch(start_game))
-        .route("/show_hand", get(handlers::show_hand))
         .route("/join_team", patch(handlers::join_team))
         .route("/declare_exchange", patch(handlers::declare_exchange))
         .with_state(app_state)

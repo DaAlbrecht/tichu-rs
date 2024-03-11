@@ -3,17 +3,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use socketioxide::socket::Sid;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Game {
     pub game_id: String,
-    //TODO: change to take socket_id
-    pub players: HashMap<String, Player>,
+    pub players: HashMap<Sid, Player>,
     pub is_running: bool,
 }
 
@@ -21,7 +21,7 @@ pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Player {
-    pub socket_id: String,
+    pub socket_id: Sid,
     pub username: String,
     pub hand: Option<Hand>,
     pub team: Option<Team>,
@@ -90,9 +90,8 @@ enum Bomb {
 }*/
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct Exchange {
-    pub player_id: String,
-    pub player_card: HashMap<String, Cards>,
+pub struct Turn {
+    pub cards: Vec<Cards>,
 }
 
 pub fn generate_hands() -> Vec<Hand> {
@@ -178,6 +177,7 @@ pub fn deal_cards(game_id: String, game_store: GameStore) -> anyhow::Result<()> 
     Ok(())
 }
 
+/*
 pub fn validate_exchange(player: Player, exchange: Exchange) -> anyhow::Result<Exchange> {
     if exchange.player_card.contains_key(&player.socket_id) {
         info!("cant exchange with yourself");
@@ -200,7 +200,7 @@ pub fn validate_exchange(player: Player, exchange: Exchange) -> anyhow::Result<E
 
     Ok(exchange)
 }
-
+*/
 fn player_owns_cards(player: &Player, cards: &[Cards]) -> bool {
     cards.iter().all(|card| {
         player

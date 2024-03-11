@@ -1,11 +1,4 @@
-use std::collections::HashMap;
-
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use tracing::info;
 
 use crate::{
@@ -69,47 +62,22 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
 
     //TODO: iterate over players and send them their hands as an event
 
+    let game_lock = game_store.lock().unwrap();
+    let game = game_lock.get(game_id).unwrap();
+    game.players
+        .values()
+        .for_each(|player| match io.get_socket(player.socket_id) {
+            Some(socket) => {
+                socket.emit("hand", player.hand.clone().unwrap()).unwrap();
+            }
+            None => {
+                //TODO: what to do here?
+                panic!("socket not found");
+            }
+        });
+
     info!("game_store: {:?}", game_store);
     (StatusCode::OK, "Game started").into_response()
-}
-
-pub(crate) async fn show_hand(
-    app_state: State<AppState>,
-    Query(username): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    let game_id = GAME_ID;
-    let game_store = app_state.game_store.clone();
-    let game_lock = game_store.lock().unwrap();
-
-    let username = if let Some(username) = username.get("username") {
-        username
-    } else {
-        return (StatusCode::BAD_REQUEST, "Username not found").into_response();
-    };
-
-    let game = if let Some(game) = game_lock.get(game_id) {
-        game
-    } else {
-        return (StatusCode::BAD_REQUEST, "Game not found").into_response();
-    };
-
-    let player = if let Some(player) = game.players.get(username) {
-        player
-    } else {
-        //this should not really happen
-        return (StatusCode::BAD_REQUEST, "Player not found").into_response();
-    };
-
-    (
-        StatusCode::OK,
-        Json(
-            player
-                .hand
-                .clone()
-                .expect("player always has a hand at this stage"),
-        ),
-    )
-        .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -131,7 +99,15 @@ pub(crate) async fn join_team(
         .get_mut(game_id)
         .expect("Game should exist at this stage");
 
-    if let Some(player) = game.players.get(&body.username) {
+    //testing purposes
+    let socket_id = game
+        .players
+        .values()
+        .find(|k| k.username == body.username)
+        .unwrap()
+        .socket_id;
+
+    if let Some(player) = game.players.get(&socket_id) {
         if player.team == Some(team.clone()) {
             return (StatusCode::BAD_REQUEST, "Player already in team").into_response();
         }
@@ -142,7 +118,7 @@ pub(crate) async fn join_team(
     //unwraps are safe because we have already checked if the player exists
     match team {
         Team::Spectator => {
-            let player = game.players.get_mut(&body.username).unwrap();
+            let player = game.players.get_mut(&socket_id).unwrap();
             player.team = Some(team);
         }
         _ => {
@@ -156,7 +132,7 @@ pub(crate) async fn join_team(
                 return (StatusCode::BAD_REQUEST, "Team is full").into_response();
             }
 
-            let player = game.players.get_mut(&body.username).unwrap();
+            let player = game.players.get_mut(&socket_id).unwrap();
 
             player.team = Some(team);
         }
