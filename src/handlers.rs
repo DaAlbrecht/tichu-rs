@@ -60,8 +60,6 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
         continue;
     }
 
-    //TODO: iterate over players and send them their hands as an event
-
     let game_lock = game_store.lock().unwrap();
     let game = game_lock.get(game_id).unwrap();
     game.players
@@ -86,6 +84,7 @@ pub(crate) struct JoinTeamBody {
     team: Team,
 }
 
+//TODO: switch to socket.io
 pub(crate) async fn join_team(
     app_state: State<AppState>,
     Json(body): Json<JoinTeamBody>,
@@ -119,7 +118,13 @@ pub(crate) async fn join_team(
     match team {
         Team::Spectator => {
             let player = game.players.get_mut(&socket_id).unwrap();
-            player.team = Some(team);
+            player.team = Some(team.clone());
+
+            app_state
+                .io
+                .to(game_id)
+                .emit("team-joined", (player.username.clone(), team))
+                .unwrap();
         }
         _ => {
             let team_count = game
@@ -134,7 +139,13 @@ pub(crate) async fn join_team(
 
             let player = game.players.get_mut(&socket_id).unwrap();
 
-            player.team = Some(team);
+            player.team = Some(team.clone());
+
+            app_state
+                .io
+                .to(game_id)
+                .emit("team-joined", (player.username.clone(), team))
+                .unwrap();
         }
     };
 

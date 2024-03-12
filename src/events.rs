@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::{
     game_client::client::{connect_lobby, create_lobby},
-    game_core::core::GameStore,
+    game_core::core::{validate_exchange, Exchange, GameStore},
 };
 
 pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
@@ -26,10 +26,19 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
     );
 
     socket.on(
-        "validate-turn",
-        |socket: SocketRef, Data::<Value>(data), game_store: State<GameStore>| {
-            info!("Validating turn: {:?}", data);
-            //_ = validate_turn(socket, data, game_store.clone());
+        "validate-exchange",
+        |socket: SocketRef, Data::<Exchange>(exchange), game_store: State<GameStore>| {
+            let exchange = validate_exchange(socket.id, exchange, game_store.clone());
+            match exchange {
+                Ok(_) => {
+                    info!("Exchange validated: {:?}", exchange);
+                    socket.emit("exchange-validation", true).unwrap();
+                }
+                Err(_) => {
+                    info!("Exchange failed: {:?}", exchange);
+                    socket.emit("exchange-validation", false).unwrap();
+                }
+            }
         },
     );
 }

@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -94,6 +95,12 @@ pub struct Turn {
     pub cards: Vec<Cards>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Exchange {
+    pub game_id: String,
+    pub player_card: HashMap<String, Cards>,
+}
+
 pub fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
     for color in [Color::Black, Color::Blue, Color::Red, Color::Green] {
@@ -177,9 +184,22 @@ pub fn deal_cards(game_id: String, game_store: GameStore) -> anyhow::Result<()> 
     Ok(())
 }
 
-/*
-pub fn validate_exchange(player: Player, exchange: Exchange) -> anyhow::Result<Exchange> {
-    if exchange.player_card.contains_key(&player.socket_id) {
+pub fn validate_exchange(
+    player_id: Sid,
+    exchange: Exchange,
+    game_store: GameStore,
+) -> anyhow::Result<Exchange> {
+    let game_lock = game_store.lock().unwrap();
+    let game = game_lock
+        .get(&exchange.game_id)
+        .with_context(|| format!("Game {} not found", exchange.game_id))?;
+
+    let player = game
+        .players
+        .get(&player_id)
+        .with_context(|| format!("failed getting player with socket_id {}", player_id))?;
+
+    if exchange.player_card.contains_key(&player.username) {
         info!("cant exchange with yourself");
         return Err(anyhow!("cant exchange with yourself"));
     }
@@ -193,23 +213,23 @@ pub fn validate_exchange(player: Player, exchange: Exchange) -> anyhow::Result<E
         return Err(anyhow!("failed to exchange cards"));
     }
 
-    if !player_owns_cards(&player, unique_cards.as_slice()) {
+    let player_hand = if let Some(hand) = &player.hand {
+        hand
+    } else {
+        info!("failed to exchange cards, player has no hand");
+        return Err(anyhow!("failed to exchange cards"));
+    };
+
+    if !player_owns_cards(player_hand, unique_cards.as_slice()) {
         info!("failed to exchange cards, player does not own all cards");
         return Err(anyhow!("failed to exchange cards"));
     }
 
     Ok(exchange)
 }
-*/
-fn player_owns_cards(player: &Player, cards: &[Cards]) -> bool {
-    cards.iter().all(|card| {
-        player
-            .hand
-            .as_ref()
-            .expect("player should always have cards at this stage")
-            .cards
-            .contains(card)
-    })
+
+fn player_owns_cards(hand: &Hand, selected_cards: &[Cards]) -> bool {
+    selected_cards.iter().all(|card| hand.cards.contains(card))
 }
 
 #[cfg(test)]
@@ -224,5 +244,122 @@ mod tests {
         for hand in hands.clone() {
             assert_eq!(hand.cards.len(), 14);
         }
+    }
+
+    #[test]
+    fn test_deal_cards() {
+        let game_store = dummy_game_store();
+        let game_id = "test_game".to_string();
+        deal_cards(game_id.clone(), game_store.clone()).unwrap();
+        let game = game_store.lock().unwrap().get(&game_id).cloned().unwrap();
+        for player in game.players.values() {
+            assert_eq!(player.hand.as_ref().unwrap().cards.len(), 14);
+        }
+    }
+
+    #[test]
+    fn test_validate_exchange() {
+        let game_id = "test_game";
+        let game_store = dummy_game_store();
+
+        deal_cards(game_id.to_string(), game_store.clone()).unwrap();
+
+        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+
+        let usernames = ["0", "1", "2", "3"];
+
+        for player in game.players.values() {
+            let valid_usernames = usernames
+                .iter()
+                .filter_map(|u| {
+                    if **u != player.username {
+                        Some(u.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<String>>();
+
+            let cards = player
+                .hand
+                .clone()
+                .expect("player has no hand")
+                .cards
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let valid_player_card = valid_usernames
+                .iter()
+                .cloned()
+                .zip(cards.iter().cloned())
+                .collect::<HashMap<String, Cards>>();
+
+            let exchange = Exchange {
+                game_id: game_id.to_string(),
+                player_card: valid_player_card,
+            };
+
+            let result = validate_exchange(player.socket_id, exchange, game_store.clone());
+            assert!(result.is_ok());
+
+            let identical_cards = [cards[0].clone(), cards[0].clone(), cards[0].clone()];
+
+            let invalid_player_card = valid_usernames
+                .iter()
+                .cloned()
+                .zip(identical_cards)
+                .collect::<HashMap<String, Cards>>();
+
+            let invalid_exchange = Exchange {
+                game_id: game_id.to_string(),
+                player_card: invalid_player_card,
+            };
+
+            let result = validate_exchange(player.socket_id, invalid_exchange, game_store.clone());
+            assert!(result.is_err());
+
+            let mut invalid_users = valid_usernames.clone();
+            invalid_users[0] = player.username.clone();
+            let invalid_player_card = invalid_users
+                .iter()
+                .cloned()
+                .zip(cards.iter().cloned())
+                .collect::<HashMap<String, Cards>>();
+
+            let invalid_exchange = Exchange {
+                game_id: game_id.to_string(),
+                player_card: invalid_player_card,
+            };
+
+            let result = validate_exchange(player.socket_id, invalid_exchange, game_store.clone());
+            assert!(result.is_err());
+        }
+    }
+
+    fn dummy_game_store() -> GameStore {
+        let mut players = HashMap::new();
+        for i in 0..4 {
+            let socket_id = Sid::new();
+            players.insert(
+                socket_id,
+                Player {
+                    socket_id,
+                    username: i.to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut game_store = HashMap::new();
+        game_store.insert(
+            "test_game".to_string(),
+            Game {
+                game_id: "test_game".to_string(),
+                players,
+                ..Default::default()
+            },
+        );
+        Arc::new(Mutex::new(game_store))
     }
 }
