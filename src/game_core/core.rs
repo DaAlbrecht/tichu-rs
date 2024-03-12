@@ -15,7 +15,13 @@ use tracing::info;
 pub struct Game {
     pub game_id: String,
     pub players: HashMap<Sid, Player>,
-    pub is_running: bool,
+    pub phase: Option<Phase>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Phase {
+    Exchanging,
+    Playing,
 }
 
 pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
@@ -26,6 +32,7 @@ pub struct Player {
     pub username: String,
     pub hand: Option<Hand>,
     pub team: Option<Team>,
+    pub exchange: Option<HashMap<String, Cards>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

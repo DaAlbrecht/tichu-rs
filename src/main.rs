@@ -43,7 +43,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(|| async { "Hello, World!" }))
         .route("/start", patch(start_game))
         .route("/join_team", patch(handlers::join_team))
-        .route("/declare_exchange", patch(handlers::declare_exchange))
         .with_state(app_state)
         .layer(layer);
 

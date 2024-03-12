@@ -2,7 +2,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use tracing::info;
 
 use crate::{
-    game_core::core::{deal_cards, Team},
+    game_core::core::{deal_cards, Phase, Team},
     AppState, GAME_ID,
 };
 
@@ -46,13 +46,11 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
     let io = app_state.io.clone();
 
     //TODO: how to deal with network errors
-    while !game.is_running {
-        match io.to(game_id).emit("game-started", true) {
-            Ok(_) => {
-                game.is_running = true;
-            }
-            Err(_) => continue,
-        }
+    if game.phase.is_none() {
+        let phase = Phase::Exchanging;
+        game.phase = Some(phase.clone());
+        info!("game_phase: {:?}", phase);
+        io.to(game_id).emit("game-phase", phase).unwrap();
     }
     drop(game_lock);
 
@@ -75,6 +73,23 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
         });
 
     info!("game_store: {:?}", game_store);
+
+    drop(game_lock);
+
+    std::thread::spawn(move || loop {
+        info!("waiting for players to exchange");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let mut game = game_store.lock().unwrap().get_mut(game_id).unwrap().clone();
+
+        if game.players.values().all(|p| p.exchange.is_some()) {
+            let io = app_state.io.clone();
+            let phase = Phase::Playing;
+            game.phase = Some(phase.clone());
+            io.to(game_id).emit("game-phase", phase).unwrap();
+            break;
+        }
+    });
+
     (StatusCode::OK, "Game started").into_response()
 }
 
@@ -150,8 +165,4 @@ pub(crate) async fn join_team(
     };
 
     (StatusCode::OK, "Joined team").into_response()
-}
-
-pub(crate) async fn declare_exchange(app_state: State<AppState>) -> impl IntoResponse {
-    todo!()
 }
