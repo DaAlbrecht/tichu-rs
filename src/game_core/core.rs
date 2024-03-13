@@ -16,6 +16,9 @@ pub struct Game {
     pub game_id: String,
     pub players: HashMap<Sid, Player>,
     pub phase: Option<Phase>,
+    pub score_t1: u16,
+    pub score_t2: u16,
+    pub player_turn_sequence: Vec<Sid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
