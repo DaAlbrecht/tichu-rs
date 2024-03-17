@@ -18,7 +18,43 @@ pub struct Game {
     pub phase: Option<Phase>,
     pub score_t1: u16,
     pub score_t2: u16,
-    pub player_turn_sequence: Vec<Sid>,
+    pub player_turn_iterator: Option<TurnIterator>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnIterator {
+    turn_sequence: HashMap<Sid, Sid>,
+    current_player: Sid,
+}
+
+impl From<Vec<Sid>> for TurnIterator {
+    fn from(players: Vec<Sid>) -> Self {
+        let mut turn_sequence = HashMap::new();
+        let mut previous_player = players.last().unwrap();
+        let first_player = players.first().unwrap();
+        for current_player in players.iter() {
+            turn_sequence.insert(*previous_player, *current_player);
+            previous_player = current_player;
+        }
+        TurnIterator {
+            turn_sequence,
+            current_player: *first_player,
+        }
+    }
+}
+
+impl Iterator for TurnIterator {
+    type Item = Sid;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_player = self.turn_sequence.get(&self.current_player);
+        if let Some(player) = next_player {
+            self.current_player = *player;
+            Some(*player)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +120,6 @@ pub enum Team {
     Two,
     Spectator,
 }
-
 /*
 enum LeadType {
     Single,
@@ -110,6 +145,8 @@ pub struct Exchange {
     pub game_id: String,
     pub player_card: HashMap<String, Cards>,
 }
+
+//pub fn select_turn(game_id: &str, game_store: GameStore) {}
 
 pub fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
@@ -175,10 +212,10 @@ pub fn generate_hands() -> Vec<Hand> {
     hands
 }
 
-pub fn deal_cards(game_id: String, game_store: GameStore) -> anyhow::Result<()> {
+pub fn deal_cards(game_id: &str, game_store: GameStore) -> anyhow::Result<()> {
     let mut game_lock = game_store.lock().unwrap();
     let game = game_lock
-        .get_mut(&game_id)
+        .get_mut(game_id)
         .with_context(|| format!("Game {} not found", game_id))?;
 
     // clear hands
@@ -242,6 +279,23 @@ fn player_owns_cards(hand: &Hand, selected_cards: &[Cards]) -> bool {
     selected_cards.iter().all(|card| hand.cards.contains(card))
 }
 
+pub fn init_playing_phase(game_id: &str, game_store: GameStore) {
+    let mut game_lock = game_store.lock().unwrap();
+    let game = game_lock.get_mut(game_id).unwrap();
+
+    let team_1 = game.players.values().filter(|p| p.team == Some(Team::One));
+
+    let team_2 = game.players.values().filter(|p| p.team == Some(Team::Two));
+
+    let turns = team_1
+        .zip(team_2)
+        .flat_map(|(p1, p2)| vec![p1.socket_id, p2.socket_id])
+        .collect::<Vec<_>>();
+
+    let turn_iterator = TurnIterator::from(turns);
+    game.player_turn_iterator = Some(turn_iterator);
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -259,9 +313,9 @@ mod tests {
     #[test]
     fn test_deal_cards() {
         let game_store = dummy_game_store();
-        let game_id = "test_game".to_string();
-        deal_cards(game_id.clone(), game_store.clone()).unwrap();
-        let game = game_store.lock().unwrap().get(&game_id).cloned().unwrap();
+        let game_id = "test_game";
+        deal_cards(game_id, game_store.clone()).unwrap();
+        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
         for player in game.players.values() {
             assert_eq!(player.hand.as_ref().unwrap().cards.len(), 14);
         }
@@ -272,7 +326,7 @@ mod tests {
         let game_id = "test_game";
         let game_store = dummy_game_store();
 
-        deal_cards(game_id.to_string(), game_store.clone()).unwrap();
+        deal_cards(game_id, game_store.clone()).unwrap();
 
         let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
 
@@ -348,18 +402,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_turns() {
+        let game_id = "test_game";
+        let game_store = dummy_game_store();
+        deal_cards(game_id, game_store.clone()).unwrap();
+        init_playing_phase(game_id, game_store.clone());
+
+        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+
+        assert_eq!(game.player_turn_iterator.is_some(), true);
+
+        let mut turn_iterator = game.player_turn_iterator.unwrap();
+
+        for _ in 0..4 {
+            let turn = turn_iterator.next();
+            assert!(turn.is_some());
+        }
+    }
+
+    #[test]
+    fn test_alternating_teams() {
+        let game_id = "test_game";
+        let game_store = dummy_game_store();
+        deal_cards(game_id, game_store.clone()).unwrap();
+        init_playing_phase(game_id, game_store.clone());
+
+        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+
+        assert_eq!(game.player_turn_iterator.is_some(), true);
+
+        let turn_sequence = game.player_turn_iterator.unwrap().turn_sequence;
+
+        for (previous, current) in turn_sequence.iter() {
+            let prev = previous.clone();
+            let curr = current.clone();
+            let team_previous = game.players.get(&prev).unwrap().team.clone();
+            let team_current = game.players.get(&curr).unwrap().team.clone();
+            assert_ne!(team_previous, team_current);
+        }
+    }
+
     fn dummy_game_store() -> GameStore {
         let mut players = HashMap::new();
         for i in 0..4 {
             let socket_id = Sid::new();
-            players.insert(
-                socket_id,
-                Player {
+            if i < 2 {
+                players.insert(
                     socket_id,
-                    username: i.to_string(),
-                    ..Default::default()
-                },
-            );
+                    Player {
+                        socket_id,
+                        username: i.to_string(),
+                        team: Some(Team::One),
+                        ..Default::default()
+                    },
+                );
+                continue;
+            } else {
+                players.insert(
+                    socket_id,
+                    Player {
+                        socket_id,
+                        username: i.to_string(),
+                        team: Some(Team::Two),
+                        ..Default::default()
+                    },
+                );
+            }
         }
         let mut game_store = HashMap::new();
         game_store.insert(

@@ -2,7 +2,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use tracing::info;
 
 use crate::{
-    game_core::core::{deal_cards, Phase, Team},
+    game_core::core::{deal_cards, init_playing_phase, Game, Phase, Team},
     AppState, GAME_ID,
 };
 
@@ -11,16 +11,86 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
 
     let game_store = app_state.game_store.clone();
 
-    let mut game_lock = game_store.lock().unwrap();
+    let game = game_store
+        .lock()
+        .expect("failed locking game_store")
+        .get(game_id)
+        .expect("Game should exist at this stage")
+        .clone();
 
-    let game = game_lock
-        .get_mut(game_id)
-        .expect("If the user is able to start the game, the game should exist");
+    if !validate_teams(&game) {
+        return (StatusCode::BAD_REQUEST, "Invalid teams").into_response();
+    }
 
+    if deal_cards(game_id, game_store.clone()).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to deal cards").into_response();
+    }
+
+    let io = app_state.io.clone();
+    let game_store = app_state.game_store.clone();
+    let mut game = game_store.lock().unwrap().get_mut(game_id).unwrap().clone();
+
+    game.players
+        .values()
+        .for_each(|player| match io.get_socket(player.socket_id) {
+            Some(socket) => {
+                socket.emit("hand", player.hand.clone().unwrap()).unwrap();
+            }
+            None => {
+                //TODO: what to do here?
+                panic!("socket not found");
+            }
+        });
+
+    if game.phase.is_none() {
+        let phase = Phase::Exchanging;
+        game.phase = Some(phase.clone());
+        info!("game_phase: {:?}", phase);
+        io.to(game_id).emit("game-phase", phase).unwrap();
+    }
+
+    start_none_blocking_exchange_loop(game_id.to_string(), app_state.clone());
+
+    (StatusCode::OK, "Game started").into_response()
+}
+
+fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>) {
+    let mut max_time = 2;
+    let game_store = app_state.game_store.clone();
+    std::thread::spawn(move || loop {
+        info!("waiting for players to exchange");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        max_time -= 1;
+
+        if max_time == 0 {
+            let io = app_state.io.clone();
+            io.to(game_id).emit("disconnect", "timeout").unwrap();
+            break;
+        }
+
+        let mut game = game_store
+            .lock()
+            .unwrap()
+            .get_mut(&game_id)
+            .unwrap()
+            .clone();
+
+        if game.players.values().all(|p| p.exchange.is_some()) {
+            let io = app_state.io.clone();
+            let phase = Phase::Playing;
+            game.phase = Some(phase.clone());
+            init_playing_phase(&game_id, game_store);
+            io.to(game_id).emit("game-phase", phase).unwrap();
+            break;
+        }
+    });
+}
+fn validate_teams(game: &Game) -> bool {
     let player_count = game.players.len();
 
     if player_count != 4 {
-        return (StatusCode::BAD_REQUEST, "Not enough players").into_response();
+        return false;
     }
 
     let team_1_count = game
@@ -36,61 +106,9 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
         .count();
 
     if team_1_count != 2 || team_2_count != 2 {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Teams are not balanced, both teams need two players",
-        )
-            .into_response();
+        return false;
     }
-
-    let io = app_state.io.clone();
-
-    //TODO: how to deal with network errors
-    if game.phase.is_none() {
-        let phase = Phase::Exchanging;
-        game.phase = Some(phase.clone());
-        info!("game_phase: {:?}", phase);
-        io.to(game_id).emit("game-phase", phase).unwrap();
-    }
-    drop(game_lock);
-
-    while deal_cards(game_id.to_string(), game_store.clone()).is_err() {
-        continue;
-    }
-
-    let game_lock = game_store.lock().unwrap();
-    let game = game_lock.get(game_id).unwrap();
-    game.players
-        .values()
-        .for_each(|player| match io.get_socket(player.socket_id) {
-            Some(socket) => {
-                socket.emit("hand", player.hand.clone().unwrap()).unwrap();
-            }
-            None => {
-                //TODO: what to do here?
-                panic!("socket not found");
-            }
-        });
-
-    info!("game_store: {:?}", game_store);
-
-    drop(game_lock);
-
-    std::thread::spawn(move || loop {
-        info!("waiting for players to exchange");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        let mut game = game_store.lock().unwrap().get_mut(game_id).unwrap().clone();
-
-        if game.players.values().all(|p| p.exchange.is_some()) {
-            let io = app_state.io.clone();
-            let phase = Phase::Playing;
-            game.phase = Some(phase.clone());
-            io.to(game_id).emit("game-phase", phase).unwrap();
-            break;
-        }
-    });
-
-    (StatusCode::OK, "Game started").into_response()
+    true
 }
 
 #[derive(serde::Deserialize)]
