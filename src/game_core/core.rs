@@ -215,23 +215,25 @@ impl TryFrom<Vec<Cards>> for TrickType {
         }
 
         fn is_full_house(cards: &[Cards]) -> bool {
-            let mut card_types = cards
+            let card_values = cards
                 .iter()
                 .filter_map(|c| c.get_card_digit())
                 .collect::<Vec<u8>>();
-            card_types.sort();
-            card_types.dedup();
 
-            if card_types.len() != 2 {
+            let mut unique_cards = card_values.clone();
+            unique_cards.sort();
+            unique_cards.dedup();
+
+            if unique_cards.len() != 2 {
                 return false;
             }
 
-            let types_count = card_types
+            let occurrences = unique_cards
                 .iter()
-                .map(|t| card_types.iter().filter(|&c| c == t).count())
-                .collect::<Vec<usize>>();
+                .map(|c| card_values.iter().filter(|&x| x == c).count())
+                .collect::<Vec<_>>();
 
-            matches!(types_count.as_slice(), [2, 3] | [3, 2])
+            matches!(occurrences.as_slice(), [2, 3] | [3, 2])
         }
 
         match cards.len() {
@@ -855,6 +857,48 @@ mod tests {
         ];
 
         trio_trick_tests.iter().for_each(|(cards, expected)| {
+            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+        });
+    }
+
+    #[test]
+    fn test_full_house_trick() {
+        let full_house_trick_tests = vec![
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Two(Color::Red),
+                    Cards::Three(Color::Black),
+                    Cards::Three(Color::Blue),
+                ],
+                TrickType::FullHouse,
+            ),
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Three(Color::Red),
+                    Cards::Three(Color::Black),
+                    Cards::Three(Color::Blue),
+                ],
+                TrickType::FullHouse,
+            ),
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Three(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Phoenix(Box::new(Phoenix { value: Some(3) })),
+                ],
+                TrickType::FullHouse,
+            ),
+        ];
+        full_house_trick_tests.iter().for_each(|(cards, expected)| {
+            let trick = TrickType::try_from(cards.clone());
+            println!("{:?}", trick);
+            println!("{:?}", cards);
             assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
         });
     }
