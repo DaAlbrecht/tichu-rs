@@ -69,19 +69,27 @@ fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>
             break;
         }
 
-        let mut game = game_store
-            .lock()
-            .unwrap()
-            .get_mut(&game_id)
-            .unwrap()
-            .clone();
+        let players = {
+            let guard = game_store.lock().unwrap();
+            let game = guard.get(&game_id).unwrap();
+            game.players.clone()
+        };
 
-        if game.players.values().all(|p| p.exchange.is_some()) {
+        if players.values().all(|p| p.exchange.is_some()) {
+            init_playing_phase(&game_id, game_store.clone());
+
             let io = app_state.io.clone();
             let phase = Phase::Playing;
+            let guard = game_store.lock().unwrap();
+            let mut game = guard.get(&game_id).unwrap().clone();
+
+            let player_turn = game.player_turn_iterator.unwrap().current_player;
+            let player = game.players.get(&player_turn).unwrap();
+
             game.phase = Some(phase.clone());
-            init_playing_phase(&game_id, game_store);
-            io.to(game_id).emit("game-phase", phase).unwrap();
+
+            io.to(game_id.clone()).emit("game-phase", phase).unwrap();
+            io.to(game_id).emit("turn", player).unwrap();
             break;
         }
     });
