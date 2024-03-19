@@ -2,7 +2,6 @@ use anyhow::anyhow;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    u8, usize,
 };
 
 use anyhow::Context;
