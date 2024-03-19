@@ -143,6 +143,7 @@ pub enum TrickType {
 impl Cards {
     fn get_card_digit(&self) -> Option<u8> {
         match self {
+            Cards::Mahjong(_) => Some(1),
             Cards::Two(_) => Some(2),
             Cards::Three(_) => Some(3),
             Cards::Four(_) => Some(4),
@@ -240,15 +241,35 @@ impl TryFrom<Vec<Cards>> for TrickType {
             1 => Ok(TrickType::Single),
             2 if all_equal(&cards) => Ok(TrickType::Pair),
             3 if all_equal(&cards) => Ok(TrickType::Triple),
-            4 if all_equal(&cards) => Ok(TrickType::FourOfAKind),
+            4 => {
+                if cards
+                    .iter()
+                    .all(|c| std::mem::discriminant(c) == std::mem::discriminant(&cards[0]))
+                {
+                    Ok(TrickType::FourOfAKind)
+                } else {
+                    Err(anyhow!("invalid trick"))
+                }
+            }
             5 if is_full_house(&cards) => Ok(TrickType::FullHouse),
             4..=14 if is_sequence_of_pairs(&cards) => Ok(TrickType::SequenceOfPairs),
             5..=14 if is_sequence(&cards) => {
-                if cards.iter().filter_map(|c| c.get_color()).count() == 1 {
-                    Ok(TrickType::StraightFlush)
-                } else {
-                    Ok(TrickType::Straight)
+                let colors = cards
+                    .iter()
+                    .filter_map(|c| c.get_color())
+                    .collect::<Vec<_>>();
+
+                //creating a straight flush with phoenix is not allowed
+                if colors.len() != cards.len() {
+                    return Ok(TrickType::Straight);
                 }
+                if colors
+                    .iter()
+                    .all(|c| std::mem::discriminant(c) == std::mem::discriminant(&colors[0]))
+                {
+                    return Ok(TrickType::StraightFlush);
+                }
+                Ok(TrickType::Straight)
             }
             _ => Err(anyhow!("invalid trick")),
         }
@@ -921,10 +942,118 @@ mod tests {
                 Cards::Three(Color::Red),
                 Cards::Phoenix(Box::new(Phoenix { value: Some(6) })),
             ],
+            //hot take
+            vec![
+                Cards::Two(Color::Black),
+                Cards::Two(Color::Blue),
+                Cards::Two(Color::Red),
+                Cards::Phoenix(Box::new(Phoenix { value: Some(2) })),
+            ],
         ];
 
         invalid_phoenix_trick_tests
             .iter()
             .for_each(|cards| assert!(TrickType::try_from(cards.clone()).is_err()));
+    }
+
+    #[test]
+    fn test_straight() {
+        let straight_trick_tests = vec![
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Four(Color::Red),
+                    Cards::Five(Color::Black),
+                    Cards::Six(Color::Blue),
+                ],
+                TrickType::Straight,
+            ),
+            (
+                vec![
+                    Cards::Mahjong(Box::new(Mahjong { wish: None })),
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Four(Color::Red),
+                    Cards::Five(Color::Black),
+                ],
+                TrickType::Straight,
+            ),
+            (
+                vec![
+                    Cards::Mahjong(Box::new(Mahjong { wish: None })),
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Four(Color::Red),
+                    Cards::Phoenix(Box::new(Phoenix { value: Some(5) })),
+                ],
+                TrickType::Straight,
+            ),
+        ];
+
+        straight_trick_tests.iter().for_each(|(cards, expected)| {
+            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+        });
+    }
+
+    #[test]
+    fn test_bomb() {
+        let bomb_trick_test = vec![
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Two(Color::Red),
+                    Cards::Two(Color::Green),
+                ],
+                TrickType::FourOfAKind,
+            ),
+            (
+                vec![
+                    Cards::Ten(Color::Black),
+                    Cards::Ten(Color::Blue),
+                    Cards::Ten(Color::Red),
+                    Cards::Ten(Color::Green),
+                ],
+                TrickType::FourOfAKind,
+            ),
+        ];
+        bomb_trick_test.iter().for_each(|(cards, expected)| {
+            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+        });
+    }
+
+    #[test]
+    fn test_straight_flush() {
+        let straight_flush_trick_tests = vec![
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Black),
+                    Cards::Four(Color::Black),
+                    Cards::Five(Color::Black),
+                    Cards::Six(Color::Black),
+                ],
+                TrickType::StraightFlush,
+            ),
+            (
+                vec![
+                    Cards::Eight(Color::Green),
+                    Cards::Nine(Color::Green),
+                    Cards::Ten(Color::Green),
+                    Cards::Jack(Color::Green),
+                    Cards::Queen(Color::Green),
+                    Cards::King(Color::Green),
+                    Cards::Ace(Color::Green),
+                ],
+                TrickType::StraightFlush,
+            ),
+        ];
+
+        straight_flush_trick_tests
+            .iter()
+            .for_each(|(cards, expected)| {
+                assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            });
     }
 }
