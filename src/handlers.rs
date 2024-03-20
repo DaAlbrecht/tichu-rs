@@ -2,7 +2,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use tracing::info;
 
 use crate::{
-    game_core::core::{deal_cards, init_playing_phase, Game, Phase, Team},
+    game_core::core::{Game, Phase, Team},
     AppState, GAME_ID,
 };
 
@@ -11,24 +11,18 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
 
     let game_store = app_state.game_store.clone();
 
-    let game = game_store
-        .lock()
-        .expect("failed locking game_store")
-        .get(game_id)
-        .expect("Game should exist at this stage")
-        .clone();
+    let mut guard = game_store.lock().unwrap();
+    let game = guard
+        .get_mut(game_id)
+        .expect("Game should exist at this stage");
 
-    if !validate_teams(&game) {
+    if !validate_teams(game) {
         return (StatusCode::BAD_REQUEST, "Invalid teams").into_response();
     }
 
-    if deal_cards(game_id, game_store.clone()).is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to deal cards").into_response();
-    }
+    game.deal_cards();
 
     let io = app_state.io.clone();
-    let game_store = app_state.game_store.clone();
-    let mut game = game_store.lock().unwrap().get_mut(game_id).unwrap().clone();
 
     game.players
         .values()
@@ -54,6 +48,7 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
     (StatusCode::OK, "Game started").into_response()
 }
 
+//TODO: refactor this nonsense
 fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>) {
     let mut max_time = 2;
     let game_store = app_state.game_store.clone();
@@ -76,12 +71,17 @@ fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>
         };
 
         if players.values().all(|p| p.exchange.is_some()) {
-            init_playing_phase(&game_id, game_store.clone());
+            let mut game = game_store
+                .lock()
+                .unwrap()
+                .get_mut(&game_id)
+                .unwrap()
+                .clone();
+
+            game.start().expect("Game should start");
 
             let io = app_state.io.clone();
             let phase = Phase::Playing;
-            let guard = game_store.lock().unwrap();
-            let mut game = guard.get(&game_id).unwrap().clone();
 
             let player_turn = game.player_turn_iterator.unwrap().current_player;
             let player = game.players.get(&player_turn).unwrap();
@@ -158,13 +158,14 @@ pub(crate) async fn join_team(
     //unwraps are safe because we have already checked if the player exists
     match team {
         Team::Spectator => {
-            let player = game.players.get_mut(&socket_id).unwrap();
-            player.team = Some(team.clone());
+            let username = game
+                .join_team(socket_id, team.clone())
+                .expect("Player should join team");
 
             app_state
                 .io
                 .to(game_id)
-                .emit("team-joined", (player.username.clone(), team))
+                .emit("team-joined", (username, team))
                 .unwrap();
         }
         _ => {
@@ -178,14 +179,14 @@ pub(crate) async fn join_team(
                 return (StatusCode::BAD_REQUEST, "Team is full").into_response();
             }
 
-            let player = game.players.get_mut(&socket_id).unwrap();
-
-            player.team = Some(team.clone());
+            let username = game
+                .join_team(socket_id, team.clone())
+                .expect("Player should join team");
 
             app_state
                 .io
                 .to(game_id)
-                .emit("team-joined", (player.username.clone(), team))
+                .emit("team-joined", (username, team))
                 .unwrap();
         }
     };

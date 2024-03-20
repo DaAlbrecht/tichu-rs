@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use socketioxide::socket::Sid;
 use tracing::info;
 
+pub(crate) use crate::game_core::types::*;
+
+pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Game {
     pub game_id: String,
@@ -23,271 +27,112 @@ pub struct Game {
     pub current_trick_type: Option<TrickType>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnIterator {
-    pub turn_sequence: HashMap<Sid, Sid>,
-    pub current_player: Sid,
-}
-
-impl From<Vec<Sid>> for TurnIterator {
-    fn from(players: Vec<Sid>) -> Self {
-        let mut turn_sequence = HashMap::new();
-        let mut previous_player = players.last().unwrap();
-        let first_player = players.first().unwrap();
-        for current_player in players.iter() {
-            turn_sequence.insert(*previous_player, *current_player);
-            previous_player = current_player;
-        }
-        TurnIterator {
-            turn_sequence,
-            current_player: *first_player,
+impl Game {
+    pub fn new(game_id: String, players: HashMap<Sid, Player>) -> Self {
+        Game {
+            game_id,
+            players,
+            ..Default::default()
         }
     }
-}
 
-impl Iterator for TurnIterator {
-    type Item = Sid;
+    pub fn join_team(&mut self, player_id: Sid, team: Team) -> anyhow::Result<String> {
+        let team_count = self
+            .players
+            .values()
+            .filter(|p| p.team == Some(team.clone()))
+            .count();
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let next_player = self.turn_sequence.get(&self.current_player);
-        if let Some(player) = next_player {
-            self.current_player = *player;
-            Some(*player)
+        if team_count >= 2 && team != Team::Spectator {
+            return Err(anyhow!("team is full"));
+        }
+
+        let player = self
+            .players
+            .get_mut(&player_id)
+            .with_context(|| format!("failed getting player with socket_id {}", player_id))?;
+        player.team = Some(team);
+        Ok(player.username.clone())
+    }
+
+    pub fn deal_cards(&mut self) {
+        let hands = generate_hands();
+
+        for (player, hand) in self.players.iter_mut().zip(hands.iter()) {
+            player.1.hand = Some(hand.clone());
+        }
+    }
+
+    pub fn validate_exchange(&self, exchange: &Exchange) -> anyhow::Result<()> {
+        let player = self
+            .players
+            .get(&exchange.player)
+            .context("failed getting player")?;
+
+        if exchange.player_card.contains_key(&player.username) {
+            info!("cant exchange with yourself");
+            return Err(anyhow!("cant exchange with yourself"));
+        }
+
+        let mut unique_cards = exchange.player_card.values().cloned().collect::<Vec<_>>();
+        unique_cards.sort();
+        unique_cards.dedup();
+
+        if unique_cards.len() != 3 {
+            info!("failed to exchange cards, must be 3 unique cards");
+            return Err(anyhow!("failed to exchange cards"));
+        }
+
+        let player_hand = if let Some(hand) = &player.hand {
+            hand
         } else {
-            None
+            info!("failed to exchange cards, player has no hand");
+            return Err(anyhow!("failed to exchange cards"));
+        };
+
+        if !player_owns_cards(player_hand, unique_cards.as_slice()) {
+            info!("failed to exchange cards, player does not own all cards");
+            return Err(anyhow!("failed to exchange cards"));
         }
+
+        Ok(())
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Phase {
-    Exchanging,
-    Playing,
-}
+    pub fn start(&mut self) -> anyhow::Result<()> {
+        let team_1 = self.players.values().filter(|p| p.team == Some(Team::One));
 
-pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
+        let team_2 = self.players.values().filter(|p| p.team == Some(Team::Two));
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Player {
-    pub socket_id: Sid,
-    pub username: String,
-    pub hand: Option<Hand>,
-    pub team: Option<Team>,
-    pub exchange: Option<HashMap<String, Cards>>,
-}
+        let turns = team_1
+            .zip(team_2)
+            .flat_map(|(p1, p2)| vec![p1.socket_id, p2.socket_id])
+            .collect::<Vec<_>>();
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Hand {
-    cards: Vec<Cards>,
-}
+        let turn_iterator = TurnIterator::from(turns);
+        self.player_turn_iterator = Some(turn_iterator);
 
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
-pub enum Cards {
-    Dog,
-    Mahjong(Box<Mahjong>),
-    Two(Color),
-    Three(Color),
-    Four(Color),
-    Five(Color),
-    Six(Color),
-    Seven(Color),
-    Eight(Color),
-    Nine(Color),
-    Ten(Color),
-    Jack(Color),
-    Queen(Color),
-    King(Color),
-    Ace(Color),
-    Phoenix(Box<Phoenix>),
-    Dragon,
-}
-
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
-pub struct Mahjong {
-    pub wish: Option<Cards>,
-}
-
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
-pub struct Phoenix {
-    pub value: Option<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
-pub enum Color {
-    Black,
-    Blue,
-    Red,
-    Green,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Team {
-    One,
-    Two,
-    Spectator,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub enum TrickType {
-    Single,
-    Pair,
-    Triple,
-    FullHouse,
-    Straight,
-    SequenceOfPairs,
-    FourOfAKind,
-    StraightFlush,
-}
-
-impl Cards {
-    fn get_card_digit(&self) -> Option<u8> {
-        match self {
-            Cards::Mahjong(_) => Some(1),
-            Cards::Two(_) => Some(2),
-            Cards::Three(_) => Some(3),
-            Cards::Four(_) => Some(4),
-            Cards::Five(_) => Some(5),
-            Cards::Six(_) => Some(6),
-            Cards::Seven(_) => Some(7),
-            Cards::Eight(_) => Some(8),
-            Cards::Nine(_) => Some(9),
-            Cards::Ten(_) => Some(10),
-            Cards::Jack(_) => Some(11),
-            Cards::Queen(_) => Some(12),
-            Cards::King(_) => Some(13),
-            Cards::Ace(_) => Some(14),
-            Cards::Phoenix(p) => p.value,
-            _ => None,
-        }
-    }
-    fn get_color(&self) -> Option<Color> {
-        match self {
-            Cards::Two(c) => Some(c.clone()),
-            Cards::Three(c) => Some(c.clone()),
-            Cards::Four(c) => Some(c.clone()),
-            Cards::Five(c) => Some(c.clone()),
-            Cards::Six(c) => Some(c.clone()),
-            Cards::Seven(c) => Some(c.clone()),
-            Cards::Eight(c) => Some(c.clone()),
-            Cards::Nine(c) => Some(c.clone()),
-            Cards::Ten(c) => Some(c.clone()),
-            Cards::Jack(c) => Some(c.clone()),
-            Cards::Queen(c) => Some(c.clone()),
-            Cards::King(c) => Some(c.clone()),
-            Cards::Ace(c) => Some(c.clone()),
-            _ => None,
-        }
-    }
-}
-
-impl TryFrom<Vec<Cards>> for TrickType {
-    type Error = anyhow::Error;
-
-    fn try_from(cards: Vec<Cards>) -> anyhow::Result<Self> {
-        fn all_equal(cards: &[Cards]) -> bool {
-            let mut card_types = cards
-                .iter()
-                .filter_map(|c| c.get_card_digit())
-                .collect::<Vec<u8>>();
-            card_types.sort();
-            card_types.dedup();
-            card_types.len() == 1
-        }
-
-        fn is_sequence(cards: &[Cards]) -> bool {
-            let mut card_digits = cards
-                .iter()
-                .filter_map(|c| c.get_card_digit())
-                .collect::<Vec<u8>>();
-            card_digits.sort();
-            card_digits.windows(2).all(|w| w[0] + 1 == w[1])
-        }
-
-        fn is_sequence_of_pairs(cards: &[Cards]) -> bool {
-            let mut card_digits = cards
-                .iter()
-                .filter_map(|c| c.get_card_digit())
-                .collect::<Vec<u8>>();
-            card_digits.sort();
-            card_digits
-                .windows(4)
-                .all(|w| w[0] == w[1] && w[2] == w[3] && w[0] + 1 == w[2])
-        }
-
-        fn is_full_house(cards: &[Cards]) -> bool {
-            let card_values = cards
-                .iter()
-                .filter_map(|c| c.get_card_digit())
-                .collect::<Vec<u8>>();
-
-            let mut unique_cards = card_values.clone();
-            unique_cards.sort();
-            unique_cards.dedup();
-
-            if unique_cards.len() != 2 {
-                return false;
-            }
-
-            let occurrences = unique_cards
-                .iter()
-                .map(|c| card_values.iter().filter(|&x| x == c).count())
-                .collect::<Vec<_>>();
-
-            matches!(occurrences.as_slice(), [2, 3] | [3, 2])
-        }
-
-        match cards.len() {
-            1 => Ok(TrickType::Single),
-            2 if all_equal(&cards) => Ok(TrickType::Pair),
-            3 if all_equal(&cards) => Ok(TrickType::Triple),
-            4 => {
-                if cards
-                    .iter()
-                    .all(|c| std::mem::discriminant(c) == std::mem::discriminant(&cards[0]))
-                {
-                    Ok(TrickType::FourOfAKind)
+        let player_with_mahjong = self
+            .players
+            .iter()
+            .find(|(_, p)| {
+                if let Some(hand) = &p.hand {
+                    hand.cards.iter().any(|c| matches!(c, Cards::Mahjong(_)))
                 } else {
-                    Err(anyhow!("invalid trick"))
+                    false
                 }
-            }
-            5 if is_full_house(&cards) => Ok(TrickType::FullHouse),
-            4..=14 if is_sequence_of_pairs(&cards) => Ok(TrickType::SequenceOfPairs),
-            5..=14 if is_sequence(&cards) => {
-                let colors = cards
-                    .iter()
-                    .filter_map(|c| c.get_color())
-                    .collect::<Vec<_>>();
+            })
+            .map(|(sid, _)| sid)
+            .context("failed getting player with mahjong")?;
 
-                //creating a straight flush with phoenix is not allowed
-                if colors.len() != cards.len() {
-                    return Ok(TrickType::Straight);
-                }
-                if colors
-                    .iter()
-                    .all(|c| std::mem::discriminant(c) == std::mem::discriminant(&colors[0]))
-                {
-                    return Ok(TrickType::StraightFlush);
-                }
-                Ok(TrickType::Straight)
-            }
-            _ => Err(anyhow!("invalid trick")),
-        }
+        self.player_turn_iterator
+            .as_mut()
+            .context("failed getting player turn iterator")?
+            .current_player = *player_with_mahjong;
+        Ok(())
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Turn {
-    pub cards: Vec<Cards>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Exchange {
-    pub game_id: String,
-    pub player_card: HashMap<String, Cards>,
-}
-
-pub fn generate_hands() -> Vec<Hand> {
+fn generate_hands() -> Vec<Hand> {
     let mut deck: Vec<Cards> = Vec::with_capacity(56);
     for color in [Color::Black, Color::Blue, Color::Red, Color::Green] {
         deck.push(Cards::Two(color.clone()));
@@ -325,116 +170,8 @@ pub fn generate_hands() -> Vec<Hand> {
     hands
 }
 
-pub fn deal_cards(game_id: &str, game_store: GameStore) -> anyhow::Result<()> {
-    let mut game_lock = game_store.lock().unwrap();
-    let game = game_lock
-        .get_mut(game_id)
-        .with_context(|| format!("Game {} not found", game_id))?;
-
-    // clear hands
-    for player in game.players.values_mut() {
-        player.hand = None;
-    }
-    let hands = generate_hands();
-
-    for (player, hand) in game.players.iter_mut().zip(hands.iter()) {
-        player.1.hand = Some(hand.clone());
-    }
-
-    Ok(())
-}
-
-pub fn validate_exchange(
-    player_id: Sid,
-    exchange: Exchange,
-    game_store: GameStore,
-) -> anyhow::Result<Exchange> {
-    let game_lock = game_store.lock().unwrap();
-    let game = game_lock
-        .get(&exchange.game_id)
-        .with_context(|| format!("Game {} not found", exchange.game_id))?;
-
-    let player = game
-        .players
-        .get(&player_id)
-        .with_context(|| format!("failed getting player with socket_id {}", player_id))?;
-
-    if exchange.player_card.contains_key(&player.username) {
-        info!("cant exchange with yourself");
-        return Err(anyhow!("cant exchange with yourself"));
-    }
-
-    let mut unique_cards = exchange.player_card.values().cloned().collect::<Vec<_>>();
-    unique_cards.sort();
-    unique_cards.dedup();
-
-    if unique_cards.len() != 3 {
-        info!("failed to exchange cards, must be 3 unique cards");
-        return Err(anyhow!("failed to exchange cards"));
-    }
-
-    let player_hand = if let Some(hand) = &player.hand {
-        hand
-    } else {
-        info!("failed to exchange cards, player has no hand");
-        return Err(anyhow!("failed to exchange cards"));
-    };
-
-    if !player_owns_cards(player_hand, unique_cards.as_slice()) {
-        info!("failed to exchange cards, player does not own all cards");
-        return Err(anyhow!("failed to exchange cards"));
-    }
-
-    Ok(exchange)
-}
-
 fn player_owns_cards(hand: &Hand, selected_cards: &[Cards]) -> bool {
     selected_cards.iter().all(|card| hand.cards.contains(card))
-}
-
-pub fn init_playing_phase(game_id: &str, game_store: GameStore) {
-    let mut game_lock = game_store.lock().unwrap();
-    let game = game_lock.get_mut(game_id).unwrap();
-
-    let team_1 = game.players.values().filter(|p| p.team == Some(Team::One));
-
-    let team_2 = game.players.values().filter(|p| p.team == Some(Team::Two));
-
-    let turns = team_1
-        .zip(team_2)
-        .flat_map(|(p1, p2)| vec![p1.socket_id, p2.socket_id])
-        .collect::<Vec<_>>();
-
-    let turn_iterator = TurnIterator::from(turns);
-    game.player_turn_iterator = Some(turn_iterator);
-
-    let player_with_mahjong = game
-        .players
-        .iter()
-        .find(|(_, p)| {
-            if let Some(hand) = &p.hand {
-                hand.cards.iter().any(|c| matches!(c, Cards::Mahjong(_)))
-            } else {
-                false
-            }
-        })
-        .map(|(sid, _)| sid)
-        .expect("one player should have mahjong");
-
-    game.player_turn_iterator
-        .as_mut()
-        .expect("failed getting turn iterator")
-        .current_player = *player_with_mahjong;
-}
-
-fn new_round(game_id: &str, trick: &[Cards], game_store: GameStore) -> anyhow::Result<()> {
-    let playing_player = {
-        let guard = game_store.lock().unwrap();
-        let game = guard.get(game_id).unwrap().clone();
-        game.player_turn_iterator.unwrap().current_player
-    };
-
-    todo!()
 }
 
 #[cfg(test)]
@@ -442,7 +179,7 @@ mod tests {
 
     use super::*;
 
-    fn dummy_game_store() -> GameStore {
+    fn dummy_game() -> Game {
         let mut players = HashMap::new();
         for i in 0..4 {
             let socket_id = Sid::new();
@@ -469,16 +206,7 @@ mod tests {
                 );
             }
         }
-        let mut game_store = HashMap::new();
-        game_store.insert(
-            "test_game".to_string(),
-            Game {
-                game_id: "test_game".to_string(),
-                players,
-                ..Default::default()
-            },
-        );
-        Arc::new(Mutex::new(game_store))
+        Game::new("test_game".to_string(), players)
     }
 
     #[test]
@@ -492,10 +220,8 @@ mod tests {
 
     #[test]
     fn test_deal_cards() {
-        let game_store = dummy_game_store();
-        let game_id = "test_game";
-        deal_cards(game_id, game_store.clone()).unwrap();
-        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+        let mut game = dummy_game();
+        game.deal_cards();
         for player in game.players.values() {
             assert_eq!(player.hand.as_ref().unwrap().cards.len(), 14);
         }
@@ -503,12 +229,8 @@ mod tests {
 
     #[test]
     fn test_validate_exchange() {
-        let game_id = "test_game";
-        let game_store = dummy_game_store();
-
-        deal_cards(game_id, game_store.clone()).unwrap();
-
-        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+        let mut game = dummy_game();
+        game.deal_cards();
 
         let usernames = ["0", "1", "2", "3"];
 
@@ -541,11 +263,11 @@ mod tests {
                 .collect::<HashMap<String, Cards>>();
 
             let exchange = Exchange {
-                game_id: game_id.to_string(),
+                player: player.socket_id,
                 player_card: valid_player_card,
             };
 
-            let result = validate_exchange(player.socket_id, exchange, game_store.clone());
+            let result = game.validate_exchange(&exchange);
             assert!(result.is_ok());
 
             let identical_cards = [cards[0].clone(), cards[0].clone(), cards[0].clone()];
@@ -557,11 +279,11 @@ mod tests {
                 .collect::<HashMap<String, Cards>>();
 
             let invalid_exchange = Exchange {
-                game_id: game_id.to_string(),
+                player: player.socket_id,
                 player_card: invalid_player_card,
             };
 
-            let result = validate_exchange(player.socket_id, invalid_exchange, game_store.clone());
+            let result = game.validate_exchange(&invalid_exchange);
             assert!(result.is_err());
 
             let mut invalid_users = valid_usernames.clone();
@@ -573,23 +295,20 @@ mod tests {
                 .collect::<HashMap<String, Cards>>();
 
             let invalid_exchange = Exchange {
-                game_id: game_id.to_string(),
+                player: player.socket_id,
                 player_card: invalid_player_card,
             };
 
-            let result = validate_exchange(player.socket_id, invalid_exchange, game_store.clone());
+            let result = game.validate_exchange(&invalid_exchange);
             assert!(result.is_err());
         }
     }
 
     #[test]
     fn test_turns() {
-        let game_id = "test_game";
-        let game_store = dummy_game_store();
-        deal_cards(game_id, game_store.clone()).unwrap();
-        init_playing_phase(game_id, game_store.clone());
-
-        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
 
         assert_eq!(game.player_turn_iterator.is_some(), true);
 
@@ -603,12 +322,9 @@ mod tests {
 
     #[test]
     fn test_alternating_teams() {
-        let game_id = "test_game";
-        let game_store = dummy_game_store();
-        deal_cards(game_id, game_store.clone()).unwrap();
-        init_playing_phase(game_id, game_store.clone());
-
-        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
 
         assert_eq!(game.player_turn_iterator.is_some(), true);
 
@@ -625,12 +341,9 @@ mod tests {
 
     #[test]
     fn test_starting_player() {
-        let game_id = "test_game";
-        let game_store = dummy_game_store();
-        deal_cards(game_id, game_store.clone()).unwrap();
-        init_playing_phase(game_id, game_store.clone());
-
-        let game = game_store.lock().unwrap().get(game_id).cloned().unwrap();
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
 
         assert_eq!(game.player_turn_iterator.is_some(), true);
 
