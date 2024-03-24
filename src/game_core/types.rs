@@ -4,39 +4,42 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use socketioxide::socket::Sid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnIterator {
-    pub turn_sequence: HashMap<Sid, Sid>,
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Round {
+    pub prev_next_player: HashMap<Sid, Sid>,
     pub current_player: Sid,
+    pub round_initiator: Sid,
+    pub previous_action: Option<Action>,
 }
 
-impl From<Vec<Sid>> for TurnIterator {
-    fn from(players: Vec<Sid>) -> Self {
-        let mut turn_sequence = HashMap::new();
-        let mut previous_player = players.last().unwrap();
-        let first_player = players.first().unwrap();
-        for current_player in players.iter() {
-            turn_sequence.insert(*previous_player, *current_player);
-            previous_player = current_player;
-        }
-        TurnIterator {
-            turn_sequence,
-            current_player: *first_player,
-        }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Action {
+    Pass,
+    Play,
+}
+
+pub fn generate_player_turn_sequence(players: Vec<Sid>) -> HashMap<Sid, Sid> {
+    let mut turn_sequence = HashMap::new();
+    let mut previous_player = players.last().unwrap();
+    for current_player in players.iter() {
+        turn_sequence.insert(*previous_player, *current_player);
+        previous_player = current_player;
     }
+    turn_sequence
 }
 
-impl Iterator for TurnIterator {
+impl Iterator for Round {
     type Item = Sid;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next_player = self.turn_sequence.get(&self.current_player);
-        if let Some(player) = next_player {
-            self.current_player = *player;
-            Some(*player)
-        } else {
-            None
+        let next_player = self.prev_next_player.get(&self.current_player);
+        if let Some(prev_action) = &self.previous_action {
+            if prev_action == &Action::Pass && next_player == Some(&self.round_initiator) {
+                return None;
+            }
         }
+        self.current_player = *next_player?;
+        Some(self.current_player)
     }
 }
 
@@ -107,7 +110,7 @@ pub enum Team {
     Spectator,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, PartialOrd)]
 pub enum TrickType {
     Single,
     Pair,
@@ -160,10 +163,10 @@ impl Cards {
     }
 }
 
-impl TryFrom<Vec<Cards>> for TrickType {
+impl TryFrom<&[Cards]> for TrickType {
     type Error = anyhow::Error;
 
-    fn try_from(cards: Vec<Cards>) -> anyhow::Result<Self> {
+    fn try_from(cards: &[Cards]) -> anyhow::Result<Self> {
         fn all_equal(cards: &[Cards]) -> bool {
             let mut card_types = cards
                 .iter()
@@ -218,8 +221,8 @@ impl TryFrom<Vec<Cards>> for TrickType {
 
         match cards.len() {
             1 => Ok(TrickType::Single),
-            2 if all_equal(&cards) => Ok(TrickType::Pair),
-            3 if all_equal(&cards) => Ok(TrickType::Triple),
+            2 if all_equal(cards) => Ok(TrickType::Pair),
+            3 if all_equal(cards) => Ok(TrickType::Triple),
             4 => {
                 if cards
                     .iter()
@@ -230,9 +233,9 @@ impl TryFrom<Vec<Cards>> for TrickType {
                     Err(anyhow!("invalid trick"))
                 }
             }
-            5 if is_full_house(&cards) => Ok(TrickType::FullHouse),
-            4..=14 if is_sequence_of_pairs(&cards) => Ok(TrickType::SequenceOfPairs),
-            5..=14 if is_sequence(&cards) => {
+            5 if is_full_house(cards) => Ok(TrickType::FullHouse),
+            4..=14 if is_sequence_of_pairs(cards) => Ok(TrickType::SequenceOfPairs),
+            5..=14 if is_sequence(cards) => {
                 let colors = cards
                     .iter()
                     .filter_map(|c| c.get_color())
@@ -253,11 +256,6 @@ impl TryFrom<Vec<Cards>> for TrickType {
             _ => Err(anyhow!("invalid trick")),
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Turn {
-    pub cards: Vec<Cards>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

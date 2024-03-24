@@ -13,6 +13,8 @@ use tracing::info;
 
 pub(crate) use crate::game_core::types::*;
 
+use super::types;
+
 pub type GameStore = Arc<Mutex<HashMap<String, Game>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -22,7 +24,7 @@ pub struct Game {
     pub phase: Option<Phase>,
     pub score_t1: u16,
     pub score_t2: u16,
-    pub player_turn_iterator: Option<TurnIterator>,
+    pub round: Option<Round>,
     pub current_trick: Vec<Cards>,
     pub current_trick_type: Option<TrickType>,
 }
@@ -108,8 +110,15 @@ impl Game {
             .flat_map(|(p1, p2)| vec![p1.socket_id, p2.socket_id])
             .collect::<Vec<_>>();
 
-        let turn_iterator = TurnIterator::from(turns);
-        self.player_turn_iterator = Some(turn_iterator);
+        let player_turn_sequence = types::generate_player_turn_sequence(turns);
+
+        let round = Round {
+            prev_next_player: player_turn_sequence,
+            current_player: Sid::new(),
+            ..Default::default()
+        };
+
+        self.round = Some(round);
 
         let player_with_mahjong = self
             .players
@@ -124,11 +133,145 @@ impl Game {
             .map(|(sid, _)| sid)
             .context("failed getting player with mahjong")?;
 
-        self.player_turn_iterator
+        self.round
             .as_mut()
             .context("failed getting player turn iterator")?
             .current_player = *player_with_mahjong;
+
+        self.round.as_mut().unwrap().round_initiator = *player_with_mahjong;
         Ok(())
+    }
+
+    pub fn play_turn(&mut self, player: &Sid, trick: &[Cards]) -> anyhow::Result<()> {
+        let current_player = self
+            .round
+            .as_ref()
+            .context("failed getting player turn iterator")?
+            .current_player;
+
+        if current_player != *player {
+            return Err(anyhow!("not your turn"));
+        }
+
+        let trick_type = TrickType::try_from(trick)
+            .with_context(|| format!("failed converting trick {:?} to trick type", trick))?;
+
+        if let Some(turn_trick_type) = &self.current_trick_type {
+            if &trick_type <= turn_trick_type {
+                return Err(anyhow!(
+                    "type: {:?} does not match current trick type or is less powerfull than: {:?}",
+                    trick_type,
+                    turn_trick_type
+                ));
+            }
+        }
+
+        let player = self
+            .players
+            .get_mut(player)
+            .with_context(|| format!("failed getting player with socket_id {}", player))?;
+
+        if !player_owns_cards(player.hand.as_ref().unwrap(), trick) {
+            return Err(anyhow!("player does not own all cards"));
+        }
+
+        compare_types(&self.current_trick, trick)?;
+
+        player
+            .hand
+            .as_mut()
+            .unwrap()
+            .cards
+            .retain(|c| !trick.contains(c));
+
+        self.current_trick = trick.to_vec();
+        todo!()
+    }
+}
+
+fn compare_types(players_trick: &[Cards], last_trick: &[Cards]) -> anyhow::Result<bool> {
+    let players_trick_type = TrickType::try_from(players_trick).with_context(|| {
+        format!(
+            "failed converting players trick {:?} to trick type",
+            players_trick
+        )
+    })?;
+
+    //this should never fail, since the last trick is already a valid trick
+    let last_trick_type = TrickType::try_from(last_trick)?;
+
+    //TODO: handle bombs
+    match last_trick_type {
+        TrickType::Single => {
+            if let TrickType::Single = players_trick_type {
+                if last_trick < players_trick {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::Pair => {
+            if let TrickType::Pair = players_trick_type {
+                if last_trick[0] < players_trick[0] {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::Triple => {
+            if let TrickType::Triple = players_trick_type {
+                if last_trick[0] < players_trick[0] {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::FullHouse => {
+            if let TrickType::FullHouse = players_trick_type {
+                //TODO: implement full house comparison
+                return Ok(true);
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::Straight => {
+            if let TrickType::Straight = players_trick_type {
+                if players_trick.len() != last_trick.len() {
+                    return Err(anyhow!("invalid trick"));
+                }
+                let mut last_trick = last_trick.to_owned();
+                let mut players_trick = players_trick.to_owned();
+                last_trick.sort();
+                players_trick.sort();
+                if last_trick[0] < players_trick[0] {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::FourOfAKind => {
+            if let TrickType::FourOfAKind = players_trick_type {
+                if last_trick[0] < players_trick[0] {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::StraightFlush => {
+            if let TrickType::StraightFlush = players_trick_type {
+                if players_trick.len() != last_trick.len() {
+                    return Err(anyhow!("invalid trick"));
+                }
+                let mut last_trick = last_trick.to_owned();
+                let mut players_trick = players_trick.to_owned();
+                last_trick.sort();
+                players_trick.sort();
+                if last_trick[0] < players_trick[0] {
+                    return Ok(true);
+                }
+            }
+            Err(anyhow!("invalid trick"))
+        }
+        TrickType::SequenceOfPairs => todo!(),
     }
 }
 
@@ -310,9 +453,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.player_turn_iterator.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let mut turn_iterator = game.player_turn_iterator.unwrap();
+        let mut turn_iterator = game.round.unwrap();
 
         for _ in 0..4 {
             let turn = turn_iterator.next();
@@ -326,9 +469,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.player_turn_iterator.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let turn_sequence = game.player_turn_iterator.unwrap().turn_sequence;
+        let turn_sequence = game.round.unwrap().prev_next_player;
 
         for (previous, current) in turn_sequence.iter() {
             let prev = previous.clone();
@@ -345,9 +488,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.player_turn_iterator.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let players_turn = game.player_turn_iterator.unwrap().current_player;
+        let players_turn = game.round.unwrap().current_player;
 
         let player_has_mahjong = game
             .players
@@ -400,7 +543,7 @@ mod tests {
             (vec![Cards::Dog], TrickType::Single),
         ];
         single_trick_tests.iter().for_each(|(cards, expected)| {
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -469,7 +612,7 @@ mod tests {
         ];
         pair_trick_tests.iter().for_each(|(cards, expected)| {
             println!("{:?}", cards);
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -591,7 +734,7 @@ mod tests {
         ];
 
         trio_trick_tests.iter().for_each(|(cards, expected)| {
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -630,10 +773,10 @@ mod tests {
             ),
         ];
         full_house_trick_tests.iter().for_each(|(cards, expected)| {
-            let trick = TrickType::try_from(cards.clone());
+            let trick = TrickType::try_from(cards.as_slice());
             println!("{:?}", trick);
             println!("{:?}", cards);
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -666,7 +809,7 @@ mod tests {
 
         invalid_phoenix_trick_tests
             .iter()
-            .for_each(|cards| assert!(TrickType::try_from(cards.clone()).is_err()));
+            .for_each(|cards| assert!(TrickType::try_from(cards.as_slice()).is_err()));
     }
 
     #[test]
@@ -705,7 +848,7 @@ mod tests {
         ];
 
         straight_trick_tests.iter().for_each(|(cards, expected)| {
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -732,7 +875,7 @@ mod tests {
             ),
         ];
         bomb_trick_test.iter().for_each(|(cards, expected)| {
-            assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+            assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
 
@@ -766,7 +909,7 @@ mod tests {
         straight_flush_trick_tests
             .iter()
             .for_each(|(cards, expected)| {
-                assert_eq!(TrickType::try_from(cards.clone()).unwrap(), *expected)
+                assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
             });
     }
 }
