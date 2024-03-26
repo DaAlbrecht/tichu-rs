@@ -94,12 +94,25 @@ pub struct Phoenix {
     pub value: Option<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Color {
     Black,
     Blue,
     Red,
     Green,
+}
+
+//When comparing Cards, only the number is relevant
+impl PartialOrd for Color {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Color {
+    fn cmp(&self, _: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -123,7 +136,7 @@ pub enum TrickType {
 }
 
 impl Cards {
-    fn get_card_digit(&self) -> Option<u8> {
+    pub fn get_card_number(&self) -> Option<u8> {
         match self {
             Cards::Mahjong(_) => Some(1),
             Cards::Two(_) => Some(2),
@@ -170,7 +183,7 @@ impl TryFrom<&[Cards]> for TrickType {
         fn all_equal(cards: &[Cards]) -> bool {
             let mut card_types = cards
                 .iter()
-                .filter_map(|c| c.get_card_digit())
+                .filter_map(|c| c.get_card_number())
                 .collect::<Vec<u8>>();
             card_types.sort();
             card_types.dedup();
@@ -180,7 +193,7 @@ impl TryFrom<&[Cards]> for TrickType {
         fn is_sequence(cards: &[Cards]) -> bool {
             let mut card_digits = cards
                 .iter()
-                .filter_map(|c| c.get_card_digit())
+                .filter_map(|c| c.get_card_number())
                 .collect::<Vec<u8>>();
             card_digits.sort();
             card_digits.windows(2).all(|w| w[0] + 1 == w[1])
@@ -189,7 +202,7 @@ impl TryFrom<&[Cards]> for TrickType {
         fn is_sequence_of_pairs(cards: &[Cards]) -> bool {
             let mut card_digits = cards
                 .iter()
-                .filter_map(|c| c.get_card_digit())
+                .filter_map(|c| c.get_card_number())
                 .collect::<Vec<u8>>();
             card_digits.sort();
             card_digits
@@ -200,7 +213,7 @@ impl TryFrom<&[Cards]> for TrickType {
         fn is_full_house(cards: &[Cards]) -> bool {
             let card_values = cards
                 .iter()
-                .filter_map(|c| c.get_card_digit())
+                .filter_map(|c| c.get_card_number())
                 .collect::<Vec<u8>>();
 
             let mut unique_cards = card_values.clone();
