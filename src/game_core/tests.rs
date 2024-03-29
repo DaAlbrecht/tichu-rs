@@ -5,8 +5,8 @@ mod tests {
     use socketioxide::socket::Sid;
 
     use crate::game_core::core::{
-        compare_tricks, generate_hands, Cards, Color, Exchange, Game, Mahjong, Phoenix, Player,
-        Team, TrickType,
+        compare_tricks, generate_hands, Action, Cards, Color, Exchange, Game, Mahjong, Phoenix,
+        Player, Team, TrickType, Turn,
     };
 
     fn dummy_game() -> Game {
@@ -298,7 +298,6 @@ mod tests {
             ),
         ];
         pair_trick_tests.iter().for_each(|(cards, expected)| {
-            println!("{:?}", cards);
             assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
@@ -461,8 +460,6 @@ mod tests {
         ];
         full_house_trick_tests.iter().for_each(|(cards, expected)| {
             let trick = TrickType::try_from(cards.as_slice());
-            println!("{:?}", trick);
-            println!("{:?}", cards);
             assert_eq!(TrickType::try_from(cards.as_slice()).unwrap(), *expected)
         });
     }
@@ -700,7 +697,6 @@ mod tests {
         pair_trick_tests
             .iter()
             .for_each(|(last, player, expected)| {
-                println!("last {:?} player {:?}", last, player);
                 let result = compare_tricks(last, player);
                 assert_eq!(result.is_ok(), *expected);
             });
@@ -1058,9 +1054,185 @@ mod tests {
         straight_trick_tests
             .iter()
             .for_each(|(last, player, expected)| {
-                println!("last {:?} player {:?}", last, player);
                 let result = compare_tricks(last, player);
                 assert_eq!(result.is_ok(), *expected);
             });
+    }
+
+    #[test]
+    fn test_bombs() {
+        let bomb_trick_tests = vec![
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Two(Color::Red),
+                    Cards::Two(Color::Green),
+                ],
+                vec![
+                    Cards::Three(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Three(Color::Red),
+                    Cards::Three(Color::Green),
+                ],
+                true,
+            ),
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Red),
+                    Cards::Four(Color::Black),
+                    Cards::Five(Color::Blue),
+                    Cards::Six(Color::Green),
+                ],
+                vec![
+                    Cards::Three(Color::Black),
+                    Cards::Three(Color::Blue),
+                    Cards::Three(Color::Red),
+                    Cards::Three(Color::Green),
+                ],
+                true,
+            ),
+            (
+                vec![Cards::King(Color::Black), Cards::King(Color::Blue)],
+                vec![
+                    Cards::Ace(Color::Black),
+                    Cards::Ace(Color::Blue),
+                    Cards::Ace(Color::Red),
+                    Cards::Ace(Color::Green),
+                ],
+                true,
+            ),
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Two(Color::Red),
+                    Cards::Two(Color::Green),
+                ],
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Black),
+                    Cards::Four(Color::Black),
+                    Cards::Five(Color::Black),
+                    Cards::Six(Color::Black),
+                ],
+                true,
+            ),
+            (
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Three(Color::Black),
+                    Cards::Four(Color::Black),
+                    Cards::Five(Color::Black),
+                    Cards::Six(Color::Black),
+                ],
+                vec![
+                    Cards::Two(Color::Black),
+                    Cards::Two(Color::Blue),
+                    Cards::Two(Color::Red),
+                    Cards::Two(Color::Green),
+                ],
+                false,
+            ),
+        ];
+
+        bomb_trick_tests
+            .iter()
+            .for_each(|(last, player, expected)| {
+                let result = compare_tricks(last, player);
+                assert_eq!(result.is_ok(), *expected);
+            });
+    }
+
+    #[test]
+    fn test_init_round() {
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
+
+        let first_player = game.round.as_ref().unwrap().current_player;
+        let first_player_hand = game
+            .players
+            .get(&first_player)
+            .unwrap()
+            .hand
+            .clone()
+            .unwrap();
+
+        let first_player_card = first_player_hand.cards.first().unwrap().clone();
+
+        let turn = Turn {
+            player: first_player,
+            action: Action::Play,
+            cards: Some(vec![first_player_card]),
+        };
+
+        let result = game.init_round(turn);
+        assert!(result.is_ok());
+
+        let next_player = game.round.as_ref().unwrap().current_player;
+
+        assert_ne!(first_player, next_player);
+        assert_eq!(
+            game.round.as_ref().unwrap().previous_action,
+            Some(Action::Play)
+        );
+        assert_eq!(
+            game.round.as_ref().unwrap().last_played_player,
+            first_player
+        );
+        assert_eq!(
+            game.round
+                .as_ref()
+                .unwrap()
+                .prev_next_player
+                .get(&first_player),
+            Some(&next_player)
+        );
+
+        assert_eq!(game.current_trick_type, Some(TrickType::Single));
+    }
+
+    #[test]
+    fn test_invalid_init_round() {
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
+
+        let second_player = game
+            .round
+            .as_ref()
+            .unwrap()
+            .prev_next_player
+            .get(&game.round.as_ref().unwrap().current_player)
+            .unwrap()
+            .clone();
+
+        let second_player_hand = game
+            .players
+            .get(&second_player)
+            .unwrap()
+            .hand
+            .clone()
+            .unwrap();
+
+        let second_player_card = second_player_hand.cards.first().unwrap().clone();
+
+        let turn = Turn {
+            player: second_player,
+            action: Action::Play,
+            cards: Some(vec![second_player_card]),
+        };
+
+        assert_eq!(game.init_round(turn).is_err(), true);
+    }
+
+    #[test]
+    fn test_play_turn() {
+        let mut game = dummy_game();
+        game.deal_cards();
+        game.start().unwrap();
+        todo!();
     }
 }

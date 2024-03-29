@@ -138,38 +138,47 @@ impl Game {
             .context("failed getting player turn iterator")?
             .current_player = *player_with_mahjong;
 
-        self.round.as_mut().unwrap().round_initiator = *player_with_mahjong;
+        self.round.as_mut().unwrap().last_played_player = *player_with_mahjong;
         Ok(())
     }
 
-    pub fn play_turn(&mut self, player: &Sid, trick: &[Cards]) -> anyhow::Result<()> {
+    //TODO: what to return
+    pub fn play_turn(&mut self, turn: Turn) -> anyhow::Result<bool> {
         let current_player = self
             .round
             .as_ref()
             .context("failed getting player turn iterator")?
             .current_player;
 
-        if current_player != *player {
+        if current_player != turn.player {
             return Err(anyhow!("not your turn"));
-        }
-
-        let trick_type = TrickType::try_from(trick)
-            .with_context(|| format!("failed converting trick {:?} to trick type", trick))?;
-
-        if let Some(turn_trick_type) = &self.current_trick_type {
-            if &trick_type <= turn_trick_type {
-                return Err(anyhow!(
-                    "type: {:?} does not match current trick type or is less powerfull than: {:?}",
-                    trick_type,
-                    turn_trick_type
-                ));
-            }
         }
 
         let player = self
             .players
-            .get_mut(player)
-            .with_context(|| format!("failed getting player with socket_id {}", player))?;
+            .get_mut(&turn.player)
+            .with_context(|| format!("failed getting player with socket_id {}", turn.player))?;
+
+        if let Action::Pass = turn.action {
+            self.round.as_mut().unwrap().previous_action = Some(Action::Pass);
+
+            match self.round.as_mut().unwrap().next() {
+                Some(_) => return Ok(false),
+                None => {
+                    return Ok(true);
+                }
+            }
+        }
+
+        if Action::Play != turn.action {
+            return Err(anyhow!("invalid action"));
+        }
+
+        let trick = if let Some(cards) = &turn.cards {
+            cards.as_slice()
+        } else {
+            return Err(anyhow!("no cards played"));
+        };
 
         if !player_owns_cards(player.hand.as_ref().unwrap(), trick) {
             return Err(anyhow!("player does not own all cards"));
@@ -185,6 +194,68 @@ impl Game {
             .retain(|c| !trick.contains(c));
 
         self.current_trick = trick.to_vec();
+        self.current_trick_type = Some(TrickType::try_from(trick)?);
+
+        self.round.as_mut().unwrap().last_played_player = player.socket_id;
+        self.round.as_mut().unwrap().previous_action = Some(Action::Play);
+
+        self.round
+            .as_mut()
+            .unwrap()
+            .next()
+            .context("failed getting next player")?;
+
+        Ok(false)
+    }
+
+    pub fn init_round(&mut self, turn: Turn) -> anyhow::Result<()> {
+        let current_player = self
+            .round
+            .as_ref()
+            .context("failed getting player turn iterator")?
+            .current_player;
+
+        if current_player != turn.player {
+            return Err(anyhow!("not your turn"));
+        }
+
+        if Action::Play != turn.action {
+            return Err(anyhow!("invalid action"));
+        }
+
+        if self.current_trick_type.is_some() {
+            return Err(anyhow!("trick already started"));
+        }
+
+        let player = self
+            .players
+            .get_mut(&turn.player)
+            .with_context(|| format!("failed getting player with socket_id {}", turn.player))?;
+
+        let trick = if let Some(cards) = &turn.cards {
+            cards.as_slice()
+        } else {
+            return Err(anyhow!("no cards played"));
+        };
+
+        if !player_owns_cards(player.hand.as_ref().unwrap(), trick) {
+            return Err(anyhow!("player does not own all cards"));
+        }
+
+        self.current_trick_type = Some(TrickType::try_from(trick)?);
+        self.current_trick = trick.to_vec();
+        self.round.as_mut().unwrap().last_played_player = player.socket_id;
+        self.round.as_mut().unwrap().previous_action = Some(Action::Play);
+        self.round
+            .as_mut()
+            .unwrap()
+            .next()
+            .context("failed getting next player")?;
+
+        Ok(())
+    }
+
+    pub fn finish_round(&mut self) -> anyhow::Result<()> {
         todo!()
     }
 }
@@ -233,6 +304,14 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     }
                 };
             }
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
+            }
+
             Err(anyhow!(
                 "Trick type {:?} does not match {:?}",
                 players_trick_type,
@@ -244,6 +323,7 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                 if last_trick[0].get_card_number() < players_trick[0].get_card_number() {
                     return Ok(());
                 }
+
                 return Err(anyhow!(
                     "tick {:?} is not greater than last trick {:?}",
                     players_trick,
@@ -251,6 +331,13 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                 ));
             }
 
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
+            }
             Err(anyhow!(
                 "Trick type {:?} does not match {:?}",
                 players_trick_type,
@@ -268,6 +355,13 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     players_trick,
                     last_trick
                 ));
+            }
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
             }
             Err(anyhow!(
                 "Trick type {:?} does not match {:?}",
@@ -315,6 +409,13 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     last_trick
                 ));
             }
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
+            }
             Err(anyhow!(
                 "Trick type {:?} does not match {:?}",
                 players_trick_type,
@@ -341,6 +442,13 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     last_trick
                 ));
             }
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
+            }
             Err(anyhow!("invalid trick"))
         }
         TrickType::FourOfAKind => {
@@ -354,6 +462,10 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     players_trick,
                     last_trick
                 ));
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
             }
             Err(anyhow!("invalid trick"))
         }
@@ -394,6 +506,14 @@ pub fn compare_tricks(last_trick: &[Cards], players_trick: &[Cards]) -> anyhow::
                     players_trick,
                     last_trick
                 ));
+            }
+
+            if let TrickType::FourOfAKind = players_trick_type {
+                return Ok(());
+            }
+
+            if let TrickType::StraightFlush = players_trick_type {
+                return Ok(());
             }
             Err(anyhow!("invalid trick"))
         }

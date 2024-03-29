@@ -8,8 +8,15 @@ use socketioxide::socket::Sid;
 pub struct Round {
     pub prev_next_player: HashMap<Sid, Sid>,
     pub current_player: Sid,
-    pub round_initiator: Sid,
+    pub last_played_player: Sid,
     pub previous_action: Option<Action>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Turn {
+    pub player: Sid,
+    pub action: Action,
+    pub cards: Option<Vec<Cards>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -34,7 +41,7 @@ impl Iterator for Round {
     fn next(&mut self) -> Option<Self::Item> {
         let next_player = self.prev_next_player.get(&self.current_player);
         if let Some(prev_action) = &self.previous_action {
-            if prev_action == &Action::Pass && next_player == Some(&self.round_initiator) {
+            if prev_action == &Action::Pass && next_player == Some(&self.last_played_player) {
                 return None;
             }
         }
@@ -56,6 +63,7 @@ pub struct Player {
     pub hand: Option<Hand>,
     pub team: Option<Team>,
     pub exchange: Option<HashMap<String, Cards>>,
+    pub trick_points: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
