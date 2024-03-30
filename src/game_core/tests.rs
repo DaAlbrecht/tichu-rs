@@ -5,8 +5,8 @@ mod tests {
     use socketioxide::socket::Sid;
 
     use crate::game_core::core::{
-        compare_tricks, generate_hands, Action, Cards, Color, Exchange, Game, Mahjong, Phoenix,
-        Player, Team, TrickType, Turn,
+        compare_tricks, generate_hands, Action, Cards, Color, Exchange, Game, Hand, Mahjong,
+        Phoenix, Player, Team, TrickType, Turn,
     };
 
     fn dummy_game() -> Game {
@@ -140,9 +140,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round.is_some(), true);
+        assert_eq!(game.round_handler.is_some(), true);
 
-        let mut turn_iterator = game.round.unwrap();
+        let mut turn_iterator = game.round_handler.unwrap();
 
         for _ in 0..4 {
             let turn = turn_iterator.next();
@@ -156,9 +156,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round.is_some(), true);
+        assert_eq!(game.round_handler.is_some(), true);
 
-        let turn_sequence = game.round.unwrap().prev_next_player;
+        let turn_sequence = game.round_handler.unwrap().prev_next_player;
 
         for (previous, current) in turn_sequence.iter() {
             let prev = previous.clone();
@@ -175,9 +175,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round.is_some(), true);
+        assert_eq!(game.round_handler.is_some(), true);
 
-        let players_turn = game.round.unwrap().current_player;
+        let players_turn = game.round_handler.unwrap().current_player;
 
         let player_has_mahjong = game
             .players
@@ -1151,7 +1151,7 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        let first_player = game.round.as_ref().unwrap().current_player;
+        let first_player = game.round_handler.as_ref().unwrap().current_player;
         let first_player_hand = game
             .players
             .get(&first_player)
@@ -1168,22 +1168,22 @@ mod tests {
             cards: Some(vec![first_player_card]),
         };
 
-        let result = game.init_round(turn);
+        let result = game.play_turn(turn);
         assert!(result.is_ok());
 
-        let next_player = game.round.as_ref().unwrap().current_player;
+        let next_player = game.round_handler.as_ref().unwrap().current_player;
 
         assert_ne!(first_player, next_player);
         assert_eq!(
-            game.round.as_ref().unwrap().previous_action,
+            game.round_handler.as_ref().unwrap().previous_action,
             Some(Action::Play)
         );
         assert_eq!(
-            game.round.as_ref().unwrap().last_played_player,
+            game.round_handler.as_ref().unwrap().last_played_player,
             first_player
         );
         assert_eq!(
-            game.round
+            game.round_handler
                 .as_ref()
                 .unwrap()
                 .prev_next_player
@@ -1201,11 +1201,11 @@ mod tests {
         game.start().unwrap();
 
         let second_player = game
-            .round
+            .round_handler
             .as_ref()
             .unwrap()
             .prev_next_player
-            .get(&game.round.as_ref().unwrap().current_player)
+            .get(&game.round_handler.as_ref().unwrap().current_player)
             .unwrap()
             .clone();
 
@@ -1225,14 +1225,316 @@ mod tests {
             cards: Some(vec![second_player_card]),
         };
 
-        assert_eq!(game.init_round(turn).is_err(), true);
+        assert_eq!(game.play_turn(turn).is_err(), true);
     }
 
     #[test]
-    fn test_play_turn() {
+    fn test_play_turns() {
         let mut game = dummy_game();
+
         game.deal_cards();
         game.start().unwrap();
-        todo!();
+
+        let all_cards = game.players.values().fold(vec![], |mut acc, player| {
+            let cards = player.hand.as_ref().unwrap().cards.clone();
+            acc.extend(cards);
+            acc
+        });
+
+        for player in game.players.values_mut() {
+            let new_hand = Hand {
+                cards: all_cards.clone(),
+            };
+            player.hand = Some(new_hand);
+        }
+
+        let p1 = game.round_handler.as_ref().unwrap().current_player;
+
+        let first_turn = Turn {
+            player: p1,
+            action: Action::Play,
+            cards: Some(vec![Cards::Two(Color::Black)]),
+        };
+
+        assert_eq!(game.play_turn(first_turn).is_ok(), true);
+
+        let p2 = game.round_handler.as_ref().unwrap().current_player;
+
+        let second_turn = Turn {
+            player: p2,
+            action: Action::Play,
+            cards: Some(vec![Cards::Ten(Color::Black)]),
+        };
+
+        let result = game.play_turn(second_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let p3 = game.round_handler.as_ref().unwrap().current_player;
+
+        let third_turn = Turn {
+            player: p3,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(third_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let p4 = game.round_handler.as_ref().unwrap().current_player;
+        let fourth_turn = Turn {
+            player: p4,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(fourth_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let p1 = game.round_handler.as_ref().unwrap().current_player;
+        let fifth_turn = Turn {
+            player: p1,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(fifth_turn);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), true);
+
+        assert_eq!(game.cleanup_trick().is_ok(), true);
+
+        //turn is over, next player should be the winner of the last trick
+        let next_player = game.round_handler.as_ref().unwrap().current_player;
+
+        assert_eq!(next_player, p2);
+
+        let p2_points = game.players.get(&p2).unwrap().trick_points;
+        assert_eq!(p2_points, 10);
+
+        let sixth_turn = Turn {
+            player: p2,
+            action: Action::Play,
+            cards: Some(vec![Cards::Three(Color::Black), Cards::Three(Color::Blue)]),
+        };
+
+        let result = game.play_turn(sixth_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let seventh_turn = Turn {
+            player: p3,
+            action: Action::Play,
+            cards: Some(vec![Cards::Four(Color::Black), Cards::Four(Color::Blue)]),
+        };
+
+        let result = game.play_turn(seventh_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let eighth_turn = Turn {
+            player: p4,
+            action: Action::Play,
+            cards: Some(vec![Cards::Five(Color::Black), Cards::Five(Color::Blue)]),
+        };
+
+        let result = game.play_turn(eighth_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let ninth_turn = Turn {
+            player: p1,
+            action: Action::Play,
+            cards: Some(vec![Cards::Six(Color::Black), Cards::Six(Color::Blue)]),
+        };
+
+        let result = game.play_turn(ninth_turn);
+
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let tenth_turn = Turn {
+            player: p2,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(tenth_turn);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let eleventh_turn = Turn {
+            player: p3,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(eleventh_turn);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let twelfth_turn = Turn {
+            player: p4,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(twelfth_turn);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), true);
+
+        assert_eq!(game.cleanup_trick().is_ok(), true);
+
+        assert_eq!(game.round_handler.as_ref().unwrap().current_player, p1);
+
+        assert_eq!(game.players.get(&p1).unwrap().trick_points, 10);
+        assert_eq!(game.players.get(&p2).unwrap().trick_points, 10);
+
+        let t_13 = Turn {
+            player: p1,
+            action: Action::Play,
+            cards: Some(vec![
+                Cards::Seven(Color::Black),
+                Cards::Seven(Color::Blue),
+                Cards::Seven(Color::Red),
+            ]),
+        };
+
+        let result = game.play_turn(t_13);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_14 = Turn {
+            player: p2,
+            action: Action::Play,
+            cards: Some(vec![
+                Cards::Eight(Color::Black),
+                Cards::Eight(Color::Blue),
+                Cards::Eight(Color::Red),
+            ]),
+        };
+
+        let result = game.play_turn(t_14);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_15 = Turn {
+            player: p3,
+            action: Action::Play,
+            cards: Some(vec![
+                Cards::Nine(Color::Black),
+                Cards::Nine(Color::Blue),
+                Cards::Phoenix(Box::new(Phoenix { value: Some(9) })),
+            ]),
+        };
+
+        let result = game.play_turn(t_15);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_16 = Turn {
+            player: p4,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_16);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_17 = Turn {
+            player: p1,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_17);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_18 = Turn {
+            player: p2,
+            action: Action::Play,
+            cards: Some(vec![
+                Cards::Ten(Color::Green),
+                Cards::Ten(Color::Blue),
+                Cards::Ten(Color::Red),
+            ]),
+        };
+
+        let result = game.play_turn(t_18);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_19 = Turn {
+            player: p3,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_19);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_20 = Turn {
+            player: p4,
+            action: Action::Play,
+            cards: Some(vec![
+                Cards::Jack(Color::Black),
+                Cards::Jack(Color::Blue),
+                Cards::Jack(Color::Red),
+            ]),
+        };
+
+        let result = game.play_turn(t_20);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_21 = Turn {
+            player: p1,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_21);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_22 = Turn {
+            player: p2,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_22);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), false);
+
+        let t_23 = Turn {
+            player: p3,
+            action: Action::Pass,
+            cards: None,
+        };
+
+        let result = game.play_turn(t_23);
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), true);
+
+        assert_eq!(game.cleanup_trick().is_ok(), true);
+
+        assert_eq!(game.round_handler.unwrap().current_player, p4);
+
+        assert_eq!(game.players.get(&p1).unwrap().trick_points, 10);
+        assert_eq!(game.players.get(&p2).unwrap().trick_points, 10);
+        assert_eq!(game.players.get(&p3).unwrap().trick_points, 0);
+        assert_eq!(game.players.get(&p4).unwrap().trick_points, 5);
     }
 }
