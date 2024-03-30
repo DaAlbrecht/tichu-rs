@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use socketioxide::socket::Sid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Round {
+pub struct RoundHandler {
     pub prev_next_player: HashMap<Sid, Sid>,
     pub current_player: Sid,
     pub last_played_player: Sid,
@@ -35,13 +35,14 @@ pub fn generate_player_turn_sequence(players: Vec<Sid>) -> HashMap<Sid, Sid> {
     turn_sequence
 }
 
-impl Iterator for Round {
+impl Iterator for RoundHandler {
     type Item = Sid;
 
     fn next(&mut self) -> Option<Self::Item> {
         let next_player = self.prev_next_player.get(&self.current_player);
         if let Some(prev_action) = &self.previous_action {
             if prev_action == &Action::Pass && next_player == Some(&self.last_played_player) {
+                self.current_player = self.last_played_player;
                 return None;
             }
         }
@@ -63,7 +64,7 @@ pub struct Player {
     pub hand: Option<Hand>,
     pub team: Option<Team>,
     pub exchange: Option<HashMap<String, Cards>>,
-    pub trick_points: u8,
+    pub trick_points: i8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,9 +98,15 @@ pub struct Mahjong {
     pub wish: Option<Cards>,
 }
 
-#[derive(Debug, Clone, PartialEq, Ord, PartialOrd, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Ord, Eq, PartialOrd, Deserialize, Serialize)]
 pub struct Phoenix {
     pub value: Option<u8>,
+}
+
+impl PartialEq for Phoenix {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -180,6 +187,17 @@ impl Cards {
             Cards::King(c) => Some(c.clone()),
             Cards::Ace(c) => Some(c.clone()),
             _ => None,
+        }
+    }
+
+    pub fn get_points(&self) -> i8 {
+        match self {
+            Cards::Five(_) => 5,
+            Cards::Ten(_) => 10,
+            Cards::King(_) => 10,
+            Cards::Dragon => 25,
+            Cards::Phoenix(_) => -25,
+            _ => 0,
         }
     }
 }
@@ -283,4 +301,29 @@ impl TryFrom<&[Cards]> for TrickType {
 pub struct Exchange {
     pub player: Sid,
     pub player_card: HashMap<String, Cards>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game_core::core::{Cards, Color, Phoenix};
+
+    #[test]
+    fn test_partial_eq_phoenix() {
+        let phoenix = Cards::Phoenix(Box::new(Phoenix { value: None }));
+        let phoenix2 = Cards::Phoenix(Box::new(Phoenix { value: Some(2) }));
+        let cards = vec![
+            Cards::Two(Color::Black),
+            phoenix.clone(),
+            Cards::Three(Color::Black),
+        ];
+        let cards2 = vec![
+            Cards::Two(Color::Black),
+            phoenix2.clone(),
+            Cards::Three(Color::Black),
+        ];
+
+        assert_eq!(cards2.contains(&phoenix), true);
+        assert_eq!(cards.contains(&phoenix2), true);
+        assert_eq!(phoenix, phoenix2);
+    }
 }
