@@ -140,9 +140,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round_handler.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let mut turn_iterator = game.round_handler.unwrap();
+        let mut turn_iterator = game.round.unwrap();
 
         for _ in 0..4 {
             let turn = turn_iterator.next();
@@ -156,15 +156,15 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round_handler.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let turn_sequence = game.round_handler.unwrap().prev_next_player;
+        let turn_sequence = game.round.unwrap().prev_next_player;
 
         for (previous, current) in turn_sequence.iter() {
             let prev = previous.clone();
             let curr = current.clone();
             let team_previous = game.players.get(&prev).unwrap().team.clone();
-            let team_current = game.players.get(&curr).unwrap().team.clone();
+            let team_current = game.players.get(&curr.socket_id).unwrap().team.clone();
             assert_ne!(team_previous, team_current);
         }
     }
@@ -175,9 +175,9 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        assert_eq!(game.round_handler.is_some(), true);
+        assert_eq!(game.round.is_some(), true);
 
-        let players_turn = game.round_handler.unwrap().current_player;
+        let players_turn = game.round.unwrap().current_player;
 
         let player_has_mahjong = game
             .players
@@ -1151,7 +1151,7 @@ mod tests {
         game.deal_cards();
         game.start().unwrap();
 
-        let first_player = game.round_handler.as_ref().unwrap().current_player;
+        let first_player = game.round.as_ref().unwrap().current_player;
         let first_player_hand = game
             .players
             .get(&first_player)
@@ -1171,27 +1171,32 @@ mod tests {
         let result = game.play_turn(turn);
         assert!(result.is_ok());
 
-        let next_player = game.round_handler.as_ref().unwrap().current_player;
+        let next_player = game.round.as_ref().unwrap().current_player;
 
         assert_ne!(first_player, next_player);
         assert_eq!(
-            game.round_handler.as_ref().unwrap().previous_action,
+            game.round.as_ref().unwrap().previous_action,
             Some(Action::Play)
         );
         assert_eq!(
-            game.round_handler.as_ref().unwrap().last_played_player,
+            game.round.as_ref().unwrap().last_played_player,
             first_player
         );
         assert_eq!(
-            game.round_handler
+            game.round
                 .as_ref()
                 .unwrap()
                 .prev_next_player
-                .get(&first_player),
-            Some(&next_player)
+                .get(&first_player)
+                .unwrap()
+                .socket_id,
+            next_player
         );
 
-        assert_eq!(game.current_trick_type, Some(TrickType::Single));
+        assert_eq!(
+            game.round.as_ref().unwrap().current_trick_type,
+            Some(TrickType::Single)
+        );
     }
 
     #[test]
@@ -1201,17 +1206,17 @@ mod tests {
         game.start().unwrap();
 
         let second_player = game
-            .round_handler
+            .round
             .as_ref()
             .unwrap()
             .prev_next_player
-            .get(&game.round_handler.as_ref().unwrap().current_player)
+            .get(&game.round.as_ref().unwrap().current_player)
             .unwrap()
             .clone();
 
         let second_player_hand = game
             .players
-            .get(&second_player)
+            .get(&second_player.socket_id)
             .unwrap()
             .hand
             .clone()
@@ -1220,7 +1225,7 @@ mod tests {
         let second_player_card = second_player_hand.cards.first().unwrap().clone();
 
         let turn = Turn {
-            player: second_player,
+            player: second_player.socket_id,
             action: Action::Play,
             cards: Some(vec![second_player_card]),
         };
@@ -1248,7 +1253,7 @@ mod tests {
             player.hand = Some(new_hand);
         }
 
-        let p1 = game.round_handler.as_ref().unwrap().current_player;
+        let p1 = game.round.as_ref().unwrap().current_player;
 
         let first_turn = Turn {
             player: p1,
@@ -1258,7 +1263,7 @@ mod tests {
 
         assert_eq!(game.play_turn(first_turn).is_ok(), true);
 
-        let p2 = game.round_handler.as_ref().unwrap().current_player;
+        let p2 = game.round.as_ref().unwrap().current_player;
 
         let second_turn = Turn {
             player: p2,
@@ -1271,7 +1276,7 @@ mod tests {
         assert_eq!(result.is_ok(), true);
         assert_eq!(result.unwrap(), false);
 
-        let p3 = game.round_handler.as_ref().unwrap().current_player;
+        let p3 = game.round.as_ref().unwrap().current_player;
 
         let third_turn = Turn {
             player: p3,
@@ -1284,7 +1289,7 @@ mod tests {
         assert_eq!(result.is_ok(), true);
         assert_eq!(result.unwrap(), false);
 
-        let p4 = game.round_handler.as_ref().unwrap().current_player;
+        let p4 = game.round.as_ref().unwrap().current_player;
         let fourth_turn = Turn {
             player: p4,
             action: Action::Pass,
@@ -1296,7 +1301,7 @@ mod tests {
         assert_eq!(result.is_ok(), true);
         assert_eq!(result.unwrap(), false);
 
-        let p1 = game.round_handler.as_ref().unwrap().current_player;
+        let p1 = game.round.as_ref().unwrap().current_player;
         let fifth_turn = Turn {
             player: p1,
             action: Action::Pass,
@@ -1310,7 +1315,7 @@ mod tests {
         assert_eq!(game.cleanup_trick().is_ok(), true);
 
         //turn is over, next player should be the winner of the last trick
-        let next_player = game.round_handler.as_ref().unwrap().current_player;
+        let next_player = game.round.as_ref().unwrap().current_player;
 
         assert_eq!(next_player, p2);
 
@@ -1393,7 +1398,7 @@ mod tests {
 
         assert_eq!(game.cleanup_trick().is_ok(), true);
 
-        assert_eq!(game.round_handler.as_ref().unwrap().current_player, p1);
+        assert_eq!(game.round.as_ref().unwrap().current_player, p1);
 
         assert_eq!(game.players.get(&p1).unwrap().trick_points, 10);
         assert_eq!(game.players.get(&p2).unwrap().trick_points, 10);
@@ -1530,7 +1535,7 @@ mod tests {
 
         assert_eq!(game.cleanup_trick().is_ok(), true);
 
-        assert_eq!(game.round_handler.unwrap().current_player, p4);
+        assert_eq!(game.round.unwrap().current_player, p4);
 
         assert_eq!(game.players.get(&p1).unwrap().trick_points, 10);
         assert_eq!(game.players.get(&p2).unwrap().trick_points, 10);

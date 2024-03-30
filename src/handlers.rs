@@ -83,7 +83,7 @@ fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>
             let io = app_state.io.clone();
             let phase = Phase::Playing;
 
-            let player_turn = game.round_handler.unwrap().current_player;
+            let player_turn = game.round.unwrap().current_player;
             let player = game.players.get(&player_turn).unwrap();
 
             game.phase = Some(phase.clone());

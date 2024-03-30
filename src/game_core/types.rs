@@ -5,11 +5,14 @@ use serde::{Deserialize, Serialize};
 use socketioxide::socket::Sid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RoundHandler {
-    pub prev_next_player: HashMap<Sid, Sid>,
+pub struct Round {
+    pub prev_next_player: HashMap<Sid, Player>,
     pub current_player: Sid,
     pub last_played_player: Sid,
     pub previous_action: Option<Action>,
+    pub current_trick: Vec<Vec<Cards>>,
+    pub current_trick_type: Option<TrickType>,
+    pub first_to_finish: Option<Sid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,28 +28,36 @@ pub enum Action {
     Play,
 }
 
-pub fn generate_player_turn_sequence(players: Vec<Sid>) -> HashMap<Sid, Sid> {
+pub fn generate_player_turn_sequence(players: Vec<Player>) -> HashMap<Sid, Player> {
     let mut turn_sequence = HashMap::new();
-    let mut previous_player = players.last().unwrap();
+    let mut previous_player = players.last().unwrap().clone();
     for current_player in players.iter() {
-        turn_sequence.insert(*previous_player, *current_player);
-        previous_player = current_player;
+        turn_sequence.insert(previous_player.socket_id, current_player.clone());
+        previous_player = current_player.to_owned();
     }
     turn_sequence
 }
 
-impl Iterator for RoundHandler {
+impl Iterator for Round {
     type Item = Sid;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next_player = self.prev_next_player.get(&self.current_player);
+        let mut next_player = self.prev_next_player.get(&self.current_player);
+
+        //if a player has no hand, skip him
+        if next_player.unwrap().hand.is_none() {
+            next_player = self.prev_next_player.get(&next_player.unwrap().socket_id);
+        }
+
         if let Some(prev_action) = &self.previous_action {
-            if prev_action == &Action::Pass && next_player == Some(&self.last_played_player) {
+            if prev_action == &Action::Pass
+                && next_player.unwrap().socket_id == self.last_played_player
+            {
                 self.current_player = self.last_played_player;
                 return None;
             }
         }
-        self.current_player = *next_player?;
+        self.current_player = next_player.unwrap().socket_id;
         Some(self.current_player)
     }
 }
