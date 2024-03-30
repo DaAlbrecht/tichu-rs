@@ -24,8 +24,8 @@ pub struct Game {
     pub phase: Option<Phase>,
     pub score_t1: u16,
     pub score_t2: u16,
-    pub round: Option<Round>,
-    pub current_trick: Vec<Cards>,
+    pub round_handler: Option<RoundHandler>,
+    pub current_trick: Vec<Vec<Cards>>,
     pub current_trick_type: Option<TrickType>,
 }
 
@@ -112,13 +112,13 @@ impl Game {
 
         let player_turn_sequence = types::generate_player_turn_sequence(turns);
 
-        let round = Round {
+        let round = RoundHandler {
             prev_next_player: player_turn_sequence,
             current_player: Sid::new(),
             ..Default::default()
         };
 
-        self.round = Some(round);
+        self.round_handler = Some(round);
 
         let player_with_mahjong = self
             .players
@@ -133,19 +133,19 @@ impl Game {
             .map(|(sid, _)| sid)
             .context("failed getting player with mahjong")?;
 
-        self.round
+        self.round_handler
             .as_mut()
             .context("failed getting player turn iterator")?
             .current_player = *player_with_mahjong;
 
-        self.round.as_mut().unwrap().last_played_player = *player_with_mahjong;
+        self.round_handler.as_mut().unwrap().last_played_player = *player_with_mahjong;
         Ok(())
     }
 
     //TODO: what to return
     pub fn play_turn(&mut self, turn: Turn) -> anyhow::Result<bool> {
         let current_player = self
-            .round
+            .round_handler
             .as_ref()
             .context("failed getting player turn iterator")?
             .current_player;
@@ -159,10 +159,14 @@ impl Game {
             .get_mut(&turn.player)
             .with_context(|| format!("failed getting player with socket_id {}", turn.player))?;
 
-        if let Action::Pass = turn.action {
-            self.round.as_mut().unwrap().previous_action = Some(Action::Pass);
+        if self.current_trick_type.is_none() {
+            return self.init_round(turn).map(|_| false);
+        }
 
-            match self.round.as_mut().unwrap().next() {
+        if let Action::Pass = turn.action {
+            self.round_handler.as_mut().unwrap().previous_action = Some(Action::Pass);
+
+            match self.round_handler.as_mut().unwrap().next() {
                 Some(_) => return Ok(false),
                 None => {
                     return Ok(true);
@@ -184,7 +188,7 @@ impl Game {
             return Err(anyhow!("player does not own all cards"));
         }
 
-        compare_tricks(&self.current_trick, trick)?;
+        compare_tricks(&self.current_trick.last().unwrap(), trick)?;
 
         player
             .hand
@@ -193,13 +197,13 @@ impl Game {
             .cards
             .retain(|c| !trick.contains(c));
 
-        self.current_trick = trick.to_vec();
+        self.current_trick.push(trick.to_vec());
         self.current_trick_type = Some(TrickType::try_from(trick)?);
 
-        self.round.as_mut().unwrap().last_played_player = player.socket_id;
-        self.round.as_mut().unwrap().previous_action = Some(Action::Play);
+        self.round_handler.as_mut().unwrap().last_played_player = player.socket_id;
+        self.round_handler.as_mut().unwrap().previous_action = Some(Action::Play);
 
-        self.round
+        self.round_handler
             .as_mut()
             .unwrap()
             .next()
@@ -208,9 +212,9 @@ impl Game {
         Ok(false)
     }
 
-    pub fn init_round(&mut self, turn: Turn) -> anyhow::Result<()> {
+    fn init_round(&mut self, turn: Turn) -> anyhow::Result<()> {
         let current_player = self
-            .round
+            .round_handler
             .as_ref()
             .context("failed getting player turn iterator")?
             .current_player;
@@ -242,11 +246,18 @@ impl Game {
             return Err(anyhow!("player does not own all cards"));
         }
 
+        player
+            .hand
+            .as_mut()
+            .unwrap()
+            .cards
+            .retain(|c| !trick.contains(c));
+
         self.current_trick_type = Some(TrickType::try_from(trick)?);
-        self.current_trick = trick.to_vec();
-        self.round.as_mut().unwrap().last_played_player = player.socket_id;
-        self.round.as_mut().unwrap().previous_action = Some(Action::Play);
-        self.round
+        self.current_trick.push(trick.to_vec());
+        self.round_handler.as_mut().unwrap().last_played_player = player.socket_id;
+        self.round_handler.as_mut().unwrap().previous_action = Some(Action::Play);
+        self.round_handler
             .as_mut()
             .unwrap()
             .next()
@@ -255,8 +266,24 @@ impl Game {
         Ok(())
     }
 
-    pub fn finish_round(&mut self) -> anyhow::Result<()> {
-        todo!()
+    pub fn cleanup_trick(&mut self) -> anyhow::Result<()> {
+        let trick_winner = self.round_handler.as_ref().unwrap().current_player;
+        let winning_player = self
+            .players
+            .get_mut(&trick_winner)
+            .with_context(|| format!("failed getting player with socket_id {}", trick_winner))?;
+
+        let trick_points = self
+            .current_trick
+            .iter()
+            .map(|t| t.iter().map(|c| c.get_points()).sum::<i8>())
+            .sum::<i8>();
+
+        winning_player.trick_points += trick_points;
+
+        self.current_trick.clear();
+        self.current_trick_type = None;
+        Ok(())
     }
 }
 
