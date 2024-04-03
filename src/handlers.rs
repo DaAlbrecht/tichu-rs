@@ -70,28 +70,27 @@ fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>
             game.players.clone()
         };
 
-        if players.values().all(|p| p.exchange.is_some()) {
-            let mut game = game_store
-                .lock()
-                .unwrap()
-                .get_mut(&game_id)
-                .unwrap()
-                .clone();
+        //if players.values().all(|p| p.exchange.is_some()) {
+        let mut guard = game_store.lock().unwrap();
+        let game = guard.get_mut(&game_id).unwrap();
 
-            game.start().expect("Game should start");
+        game.start().expect("Game should start");
 
-            let io = app_state.io.clone();
-            let phase = Phase::Playing;
+        let io = app_state.io.clone();
+        let phase = Phase::Playing;
 
-            let player_turn = game.round.unwrap().current_player;
-            let player = game.players.get(&player_turn).unwrap();
+        let player_turn = game.round.as_ref().unwrap().current_player.clone();
 
-            game.phase = Some(phase.clone());
+        game.phase = Some(phase.clone());
 
-            io.to(game_id.clone()).emit("game-phase", phase).unwrap();
-            io.to(game_id).emit("turn", player).unwrap();
-            break;
-        }
+        io.to(game_id.clone()).emit("game-phase", phase).unwrap();
+        info!(
+            "username: {:?}",
+            players.get(&player_turn).unwrap().username
+        );
+        io.to(game_id).emit("next-player", player_turn).unwrap();
+        break;
+        //}
     });
 }
 fn validate_teams(game: &Game) -> bool {
