@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use axum::routing::{get, patch};
 use socketioxide::SocketIo;
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
@@ -44,7 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/start", patch(start_game))
         .route("/join_team", patch(handlers::join_team))
         .with_state(app_state)
-        .layer(layer);
+        .layer(layer)
+        .layer(CorsLayer::permissive());
 
     info!("Starting server");
 
