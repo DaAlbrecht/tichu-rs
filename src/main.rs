@@ -5,7 +5,7 @@ mod handlers;
 
 use std::sync::Arc;
 
-use axum::routing::{get, patch};
+use axum::routing::patch;
 use socketioxide::SocketIo;
 use tower_http::cors::CorsLayer;
 use tracing::info;
@@ -19,12 +19,6 @@ struct State {
 }
 
 type AppState = Arc<State>;
-
-pub static GAME_ID: &str = if cfg!(debug_assertions) {
-    "b4a0738b-6be2-4ede-bf37-48e5595f73e1"
-} else {
-    panic!("Game id should be set in debug mode");
-};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +35,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //TODO: map / protect requests -> users -> sockets.id
     let app = axum::Router::new()
-        .route("/", get(game_state))
         .route("/start", patch(start_game))
         .route("/join_team", patch(handlers::join_team))
         .with_state(app_state)
@@ -53,10 +46,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
     Ok(())
-}
-
-async fn game_state(app_state: axum::extract::State<AppState>) -> String {
-    let game_store = app_state.game_store.clone();
-    let game = game_store.lock().unwrap().get(GAME_ID).unwrap().clone();
-    format!("{:?}", game)
 }
