@@ -4,10 +4,7 @@ use serde_json::Value;
 use socketioxide::extract::SocketRef;
 use tracing::info;
 
-use crate::{
-    game_core::core::{Game, GameStore, Player},
-    GAME_ID,
-};
+use crate::game_core::core::{Game, GameStore, Player};
 
 #[derive(Debug, Deserialize)]
 struct JoinLobbyDto {
@@ -16,8 +13,8 @@ struct JoinLobbyDto {
 }
 
 pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) -> Result<()> {
-    let game_id = GAME_ID.to_string();
-    //let game_id = uuid::Uuid::new_v4().to_string();
+    //in debug mode use GAME_ID to test otherwise generate a new game_id 
+     let game_id = uuid::Uuid::new_v4().to_string();
 
     let new_player = Player {
         socket_id: socket.id,

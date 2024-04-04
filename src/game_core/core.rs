@@ -170,7 +170,7 @@ impl Game {
             match round.next() {
                 Some(_) => return Ok(false),
                 None => {
-                    if self.players.iter().map(|(_, p)| p.hand.is_some()).count() == 1 {
+                    if self.players.values().filter(|p| p.hand.is_some()).count() == 1 {
                         //TODO: handle game end
                         self.cleanup_round()?;
                         return Ok(true);

@@ -3,17 +3,15 @@ use tracing::info;
 
 use crate::{
     game_core::core::{Game, Phase, Team},
-    AppState, GAME_ID,
+    AppState,
 };
 
-pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse {
-    let game_id = GAME_ID;
-
+pub(crate) async fn start_game(app_state: State<AppState>, game_id: String) -> impl IntoResponse {
     let game_store = app_state.game_store.clone();
 
     let mut guard = game_store.lock().unwrap();
     let game = guard
-        .get_mut(game_id)
+        .get_mut(&game_id)
         .expect("Game should exist at this stage");
 
     if !validate_teams(game) {
@@ -40,7 +38,7 @@ pub(crate) async fn start_game(app_state: State<AppState>) -> impl IntoResponse 
         let phase = Phase::Exchanging;
         game.phase = Some(phase.clone());
         info!("game_phase: {:?}", phase);
-        io.to(game_id).emit("game-phase", phase).unwrap();
+        io.to(game_id.clone()).emit("game-phase", phase).unwrap();
     }
 
     start_none_blocking_exchange_loop(game_id.to_string(), app_state.clone());
@@ -70,27 +68,27 @@ fn start_none_blocking_exchange_loop(game_id: String, app_state: State<AppState>
             game.players.clone()
         };
 
-        //if players.values().all(|p| p.exchange.is_some()) {
-        let mut guard = game_store.lock().unwrap();
-        let game = guard.get_mut(&game_id).unwrap();
+        if players.values().all(|p| p.exchange.is_some()) {
+            let mut guard = game_store.lock().unwrap();
+            let game = guard.get_mut(&game_id).unwrap();
 
-        game.start().expect("Game should start");
+            game.start().expect("Game should start");
 
-        let io = app_state.io.clone();
-        let phase = Phase::Playing;
+            let io = app_state.io.clone();
+            let phase = Phase::Playing;
 
-        let player_turn = game.round.as_ref().unwrap().current_player.clone();
+            let player_turn = game.round.as_ref().unwrap().current_player;
 
-        game.phase = Some(phase.clone());
+            game.phase = Some(phase.clone());
 
-        io.to(game_id.clone()).emit("game-phase", phase).unwrap();
-        info!(
-            "username: {:?}",
-            players.get(&player_turn).unwrap().username
-        );
-        io.to(game_id).emit("next-player", player_turn).unwrap();
-        break;
-        //}
+            io.to(game_id.clone()).emit("game-phase", phase).unwrap();
+            info!(
+                "username: {:?}",
+                players.get(&player_turn).unwrap().username
+            );
+            io.to(game_id).emit("next-player", player_turn).unwrap();
+            break;
+        }
     });
 }
 fn validate_teams(game: &Game) -> bool {
@@ -120,6 +118,7 @@ fn validate_teams(game: &Game) -> bool {
 
 #[derive(serde::Deserialize)]
 pub(crate) struct JoinTeamBody {
+    game_id: String,
     username: String,
     team: Team,
 }
@@ -129,13 +128,13 @@ pub(crate) async fn join_team(
     app_state: State<AppState>,
     Json(body): Json<JoinTeamBody>,
 ) -> impl IntoResponse {
-    let game_id = GAME_ID;
+    let game_id = body.game_id;
     let game_store = app_state.game_store.clone();
     let mut game_lock = game_store.lock().unwrap();
     let team = body.team;
 
     let game = game_lock
-        .get_mut(game_id)
+        .get_mut(&game_id)
         .expect("Game should exist at this stage");
 
     //testing purposes
