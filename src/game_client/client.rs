@@ -13,12 +13,13 @@ struct JoinLobbyDto {
 }
 
 pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) -> Result<()> {
-    //in debug mode use GAME_ID to test otherwise generate a new game_id 
-     let game_id = uuid::Uuid::new_v4().to_string();
+    //in debug mode use GAME_ID to test otherwise generate a new game_id
+    let game_id = uuid::Uuid::new_v4().to_string();
 
     let new_player = Player {
         socket_id: socket.id,
         username,
+        is_host: true,
         ..Default::default()
     };
 
@@ -49,12 +50,6 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
     let data: JoinLobbyDto = serde_json::from_value(data)?;
     let game_id = data.game_id;
 
-    let new_player = Player {
-        socket_id: socket.id,
-        username: data.username,
-        ..Default::default()
-    };
-
     if !game_store.lock().unwrap().contains_key(&game_id) {
         info!("Lobby does not exist");
         socket.emit("lobby-not-found", game_id)?;
@@ -63,6 +58,20 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
 
     socket.join(game_id.clone())?;
 
+    let player_count = game_store
+        .lock()
+        .unwrap()
+        .get(&game_id)
+        .unwrap()
+        .players
+        .len() as u8;
+
+    let new_player = Player {
+        socket_id: socket.id,
+        username: data.username,
+        place: player_count + 1,
+        ..Default::default()
+    };
     game_store
         .lock()
         .unwrap()
@@ -74,7 +83,7 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
     // emit to all users in the new user that joined
     socket
         .to(game_id.clone())
-        .emit("user-joined", &new_player.username)
+        .emit("user-joined", &new_player)
         .expect("Failed to emit");
 
     //emit to the new user all the users in the lobby
@@ -83,12 +92,7 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
     let game = game_guard.get(&game_id);
 
     if let Some(game) = game {
-        let players = game
-            .players
-            .values()
-            .filter(|u| u.socket_id != new_player.socket_id)
-            .map(|u| u.username.as_str())
-            .collect::<Vec<&str>>();
+        let players = game.players.values().collect::<Vec<_>>();
 
         socket.emit("users-in-lobby", players)?;
     }

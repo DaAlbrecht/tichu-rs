@@ -69,13 +69,21 @@ pub enum Phase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Player {
+    #[serde(rename = "id")]
     pub socket_id: Sid,
+    #[serde(rename = "name")]
     pub username: String,
+    pub is_host: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hand: Option<Hand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<Team>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exchange: Option<HashMap<String, Cards>>,
     pub trick_points: i8,
+    pub place: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
