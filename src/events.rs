@@ -1,5 +1,8 @@
 use serde_json::Value;
-use socketioxide::extract::{Data, SocketRef, State};
+use socketioxide::{
+    extract::{Data, SocketRef, State},
+    socket::Sid,
+};
 use tracing::info;
 
 use crate::{
@@ -22,6 +25,59 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
         "create-lobby",
         |socket: SocketRef, Data::<String>(username), game_store: State<GameStore>| {
             _ = create_lobby(socket, username, game_store.clone());
+        },
+    );
+
+    socket.on(
+        "player-swap-team",
+        |socket: SocketRef,
+         Data::<PlayerSwapTeam>(player_swap_team),
+         game_store: State<GameStore>| {
+            info!("Swapping team: {:?}", player_swap_team);
+            let game_id = player_swap_team.game_id;
+            let game_store = game_store.clone();
+            let ((team_player1, position_p1), (team_player2, position_p2)) = {
+                let guard = game_store.lock().unwrap();
+                let game = guard.get(&game_id).unwrap();
+                let player1 = game
+                    .players
+                    .get(&player_swap_team.player1)
+                    .expect("Player 1 not found");
+                let player2 = game
+                    .players
+                    .get(&player_swap_team.player2)
+                    .expect("Player 2 not found");
+
+                let position_1 = player1.place;
+                let position_2 = player2.place;
+                (
+                    (player1.team.clone(), position_1),
+                    (player2.team.clone(), position_2),
+                )
+            };
+
+            let mut guard = game_store.lock().unwrap();
+            let game = guard.get_mut(&game_id).unwrap();
+            game.players
+                .get_mut(&player_swap_team.player1)
+                .unwrap()
+                .team = team_player2;
+            game.players
+                .get_mut(&player_swap_team.player2)
+                .unwrap()
+                .team = team_player1;
+
+            game.players
+                .get_mut(&player_swap_team.player1)
+                .unwrap()
+                .place = position_p2;
+            game.players
+                .get_mut(&player_swap_team.player2)
+                .unwrap()
+                .place = position_p1;
+
+            let players = game.players.values().cloned().collect::<Vec<_>>();
+            socket.emit("users-in-lobby", players).unwrap();
         },
     );
 
@@ -68,4 +124,12 @@ pub fn on_connect(socket: SocketRef, Data(_): Data<Value>) {
 struct PlayTurn {
     game_id: String,
     cards: Vec<Cards>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlayerSwapTeam {
+    game_id: String,
+    player1: Sid,
+    player2: Sid,
 }
