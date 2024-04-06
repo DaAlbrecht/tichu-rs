@@ -4,7 +4,7 @@ use serde_json::Value;
 use socketioxide::extract::SocketRef;
 use tracing::info;
 
-use crate::game_core::core::{Game, GameStore, Player};
+use crate::game_core::core::{Game, GameStore, Player, Team};
 
 #[derive(Debug, Deserialize)]
 struct JoinLobbyDto {
@@ -20,6 +20,7 @@ pub fn create_lobby(socket: SocketRef, username: String, game_store: GameStore) 
         socket_id: socket.id,
         username,
         is_host: true,
+        team: Some(Team::One),
         ..Default::default()
     };
 
@@ -66,12 +67,21 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
         .players
         .len() as u8;
 
+    let team = if player_count % 2 == 0 {
+        Some(Team::One)
+    } else {
+        Some(Team::Two)
+    };
+
     let new_player = Player {
         socket_id: socket.id,
         username: data.username,
         place: player_count + 1,
+        team,
         ..Default::default()
     };
+
+    info!("New player: {:?}", new_player);
     game_store
         .lock()
         .unwrap()
@@ -93,6 +103,7 @@ pub fn connect_lobby(socket: SocketRef, data: Value, game_store: GameStore) -> R
 
     if let Some(game) = game {
         let players = game.players.values().collect::<Vec<_>>();
+        info!("Players in lobby: {:?}", players);
 
         socket.emit("users-in-lobby", players)?;
     }
