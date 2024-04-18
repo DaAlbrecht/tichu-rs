@@ -39,7 +39,8 @@ COPY --from=builder /tichu-rs/target/release/tichu-rs ${APP}/tichu-rs
 
 RUN chown -R $APP_USER:$APP_USER ${APP}
 
-USER $APP_USER
+#USER $APP_USER
+USER 10001
 WORKDIR ${APP}
 
 CMD ["./tichu-rs"]
