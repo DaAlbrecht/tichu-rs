@@ -1,3 +1,5 @@
+use std::task::Wake;
+
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use tracing::info;
 
@@ -6,12 +8,20 @@ use crate::{
     AppState,
 };
 
-pub(crate) async fn start_game(app_state: State<AppState>, game_id: String) -> impl IntoResponse {
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartGameBody {
+    game_id: String,
+}
+pub(crate) async fn start_game(
+    app_state: State<AppState>,
+    Json(game_id): Json<StartGameBody>,
+) -> impl IntoResponse {
     let game_store = app_state.game_store.clone();
 
     let mut guard = game_store.lock().unwrap();
     let game = guard
-        .get_mut(&game_id)
+        .get_mut(&game_id.game_id)
         .expect("Game should exist at this stage");
 
     if !validate_teams(game) {
@@ -37,13 +47,41 @@ pub(crate) async fn start_game(app_state: State<AppState>, game_id: String) -> i
     if game.phase.is_none() {
         let phase = Phase::Exchanging;
         game.phase = Some(phase.clone());
-        info!("game_phase: {:?}", phase);
-        io.to(game_id.clone()).emit("game-phase", phase).unwrap();
+        io.to(game_id.game_id.clone())
+            .emit("game-phase", phase)
+            .unwrap();
     }
+    drop(guard);
 
-    start_none_blocking_exchange_loop(game_id.to_string(), app_state.clone());
+    //start_none_blocking_exchange_loop(game_id.game_id.to_string(), app_state.clone());
+    skip_exchange(game_id.game_id.to_string(), app_state.clone());
 
     (StatusCode::OK, "Game started").into_response()
+}
+
+fn skip_exchange(game_id: String, app_state: State<AppState>) {
+    let game_store = app_state.game_store.clone();
+    let mut guard = game_store.lock().unwrap();
+    let game = guard.get_mut(&game_id).unwrap();
+    game.start().expect("Game should start");
+
+    let io = app_state.io.clone();
+    let phase = Phase::Playing;
+
+    let player_turn = game.round.as_ref().unwrap().current_player;
+
+    let player_position = game
+        .players
+        .values()
+        .find(|p| p.socket_id == player_turn)
+        .unwrap()
+        .place;
+
+    game.phase = Some(phase.clone());
+
+    io.to(game_id.clone()).emit("game-phase", phase).unwrap();
+    io.to(game_id.clone()).emit("started", "").unwrap();
+    io.to(game_id).emit("next-player", player_position).unwrap();
 }
 
 //TODO: refactor this nonsense
