@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install libssl1.1 -y && rm -rf /var/lib/apt/lists/
 EXPOSE 3000
 
 ENV TZ=Etc/UTC \
-    APP_USER=appuser
+    APP_USER=10001
 
 RUN groupadd $APP_USER \
     && useradd -g $APP_USER $APP_USER \
